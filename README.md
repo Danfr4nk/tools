@@ -23,6 +23,11 @@ Each tool lives in its own directory with its own README:
   (2026-09-15).
 - **`modbod/`** — body-spec / wireframe proportion studies, moved here from
   `Danfr4nk/modbod` (2026-09-15).
+- **`kinship/`** — face-comparison CLI (InsightFace `buffalo_l` ArcFace
+  embeddings + cosine similarity → resemblance verdict + heuristic
+  confidence). Local Python script, not a web app: needs the
+  `~/workspace/face-tag/venv` environment. The confidence is an uncalibrated
+  heuristic — a resemblance meter, not a kinship test.
 
 ## Adding a tool
 
