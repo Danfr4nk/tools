@@ -28,6 +28,10 @@ Each tool lives in its own directory with its own README:
   confidence). Local Python script, not a web app: needs the
   `~/workspace/face-tag/venv` environment. The confidence is an uncalibrated
   heuristic — a resemblance meter, not a kinship test.
+- **`age/`** — visual age estimation. Web app runs a Vision Transformer
+  age-bracket classifier fully in-browser (Transformers.js, local ONNX —
+  nothing uploaded); Python CLI (`age.py`) uses the same model via
+  HuggingFace transformers. See `age/README.md` for the SOTA research notes.
 
 ## Adding a tool
 
