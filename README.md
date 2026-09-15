@@ -12,6 +12,17 @@ Each tool lives in its own directory with its own README:
   moved here from `Danfr4nk/attraction-guide` (2026-09-15). A/B face-preference
   diagnostic, scenario telemetry + scenario ratings, face book, frame-describe
   lexicon tool, body metrics, telemetry lab. See `attraction/README.md`.
+- **`musictrainer/`** — the weekly taste-experiment scorecard (Discover Weekly +
+  Release Radar), moved here from `Danfr4nk/MusicTrainer` (2026-09-15). Score
+  slider 1–10, skip/like, ADDED? yes/no, prediction lock, week JSON export.
+- **`track-autopsy/`** — dissects WHAT drives a track's liking (companion to
+  MusicTrainer), moved here from `Danfr4nk/track-autopsy` (2026-09-15). 16
+  driver check-all-that-apply + load-bearing-element pick per track.
+- **`hook2piano/`** — TheoryTab → printable grand-staff piano score (Python
+  engine + Pyodide web app), moved here from `Danfr4nk/hook2piano`
+  (2026-09-15).
+- **`modbod/`** — body-spec / wireframe proportion studies, moved here from
+  `Danfr4nk/modbod` (2026-09-15).
 
 ## Adding a tool
 
