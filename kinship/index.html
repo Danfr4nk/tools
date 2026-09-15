@@ -27,6 +27,7 @@
   .drop:hover { border-color:var(--acc); }
   .drop canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; }
   .drop .hint { padding:20px; pointer-events:none; }
+  .vh { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
   .faces { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
   .faces button { background:#0d0f14; border:1px solid var(--line); color:var(--dim);
                   border-radius:8px; padding:4px 10px; cursor:pointer; font-size:13px; }
@@ -61,13 +62,13 @@
     <div class="card">
       <h2>photo A</h2>
       <div class="drop" id="dropA"><div class="hint">drop, paste, or click to load<br>photo A</div></div>
-      <input type="file" id="fileA" accept="image/*" hidden>
+      <input type="file" id="fileA" accept="image/*" class="vh">
       <div class="faces" id="facesA"></div>
     </div>
     <div class="card">
       <h2>photo B</h2>
       <div class="drop" id="dropB"><div class="hint">drop, paste, or click to load<br>photo B</div></div>
-      <input type="file" id="fileB" accept="image/*" hidden>
+      <input type="file" id="fileB" accept="image/*" class="vh">
       <div class="faces" id="facesB"></div>
     </div>
   </div>
