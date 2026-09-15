@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kinship — sibling check</title>
+<style>
+  :root { --bg:#0d0f14; --panel:#151923; --line:#262c3d; --txt:#e8eaf0; --dim:#8b93a7;
+          --acc:#7dd3fc; --good:#4ade80; --warn:#fbbf24; --bad:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { padding:28px 20px 8px; max-width:1060px; margin:0 auto; }
+  h1 { margin:0; font-size:26px; letter-spacing:.5px; }
+  h1 small { color:var(--dim); font-weight:400; font-size:14px; margin-left:10px; }
+  #modelbar { max-width:1060px; margin:8px auto 0; padding:0 20px; color:var(--dim); font-size:13px; }
+  #modelbar .track { height:6px; background:var(--line); border-radius:3px; margin-top:6px; overflow:hidden; }
+  #modelbar .fill { height:100%; width:0%; background:var(--acc); transition:width .2s; }
+  main { max-width:1060px; margin:0 auto; padding:18px 20px 60px; }
+  .photos { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:640px){ .photos{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .card h2 { margin:0 0 10px; font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:1px; }
+  .drop { border:2px dashed var(--line); border-radius:10px; min-height:220px;
+          display:flex; align-items:center; justify-content:center; text-align:center;
+          color:var(--dim); cursor:pointer; position:relative; overflow:hidden; }
+  .drop:hover { border-color:var(--acc); }
+  .drop canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; }
+  .drop .hint { padding:20px; pointer-events:none; }
+  .faces { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .faces button { background:#0d0f14; border:1px solid var(--line); color:var(--dim);
+                  border-radius:8px; padding:4px 10px; cursor:pointer; font-size:13px; }
+  .faces button.on { border-color:var(--acc); color:var(--acc); }
+  #result { margin-top:20px; background:var(--panel); border:1px solid var(--line);
+            border-radius:12px; padding:20px; display:none; }
+  #result.show { display:block; }
+  .big { display:flex; gap:28px; flex-wrap:wrap; align-items:baseline; }
+  .score { font-size:40px; font-weight:700; }
+  .confbar { height:10px; background:var(--line); border-radius:5px; overflow:hidden; margin:10px 0 4px; }
+  .confbar > div { height:100%; background:linear-gradient(90deg,var(--acc),#a78bfa); width:0%; transition:width .5s; }
+  .verdict { font-size:19px; font-weight:600; margin:8px 0 2px; }
+  .note { color:var(--dim); margin:0 0 12px; }
+  .cav { background:#0d0f14; border:1px solid var(--line); border-left:3px solid var(--warn);
+         border-radius:6px; padding:8px 12px; margin:6px 0; font-size:14px; }
+  .meta { color:var(--dim); font-size:13px; margin-top:12px; }
+  footer { max-width:1060px; margin:0 auto; padding:0 20px 40px; color:var(--dim); font-size:12.5px; }
+  .err { color:var(--bad); }
+  #runstate { color:var(--dim); font-size:13px; margin-top:12px; min-height:20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>kinship <small>sibling check — face comparison</small></h1>
+</header>
+<div id="modelbar">
+  <span id="modelmsg">loading models…</span>
+  <div class="track"><div class="fill" id="modelfill"></div></div>
+</div>
+<main>
+  <div class="photos">
+    <div class="card">
+      <h2>photo A</h2>
+      <div class="drop" id="dropA"><div class="hint">drop, paste, or click to load<br>photo A</div></div>
+      <input type="file" id="fileA" accept="image/*" hidden>
+      <div class="faces" id="facesA"></div>
+    </div>
+    <div class="card">
+      <h2>photo B</h2>
+      <div class="drop" id="dropB"><div class="hint">drop, paste, or click to load<br>photo B</div></div>
+      <input type="file" id="fileB" accept="image/*" hidden>
+      <div class="faces" id="facesB"></div>
+    </div>
+  </div>
+  <div id="runstate"></div>
+  <section id="result">
+    <div class="big">
+      <div><div class="score" id="rCos">–</div><div class="meta">cosine similarity</div></div>
+      <div style="flex:1;min-width:220px"><div class="score" id="rConf">–</div>
+        <div class="confbar"><div id="rConfBar"></div></div><div class="meta">kinship confidence (heuristic)</div></div>
+    </div>
+    <div class="verdict" id="rVerdict"></div>
+    <p class="note" id="rNote"></p>
+    <div id="rCaveats"></div>
+    <div class="meta" id="rMeta"></div>
+  </section>
+</main>
+<footer>
+  Resemblance meter, not a kinship test. Confidence is a transparent heuristic
+  (logistic, center 0.30, slope 11) on ArcFace cosine similarity — it was never
+  trained on sibling data. Everything runs locally in your browser; photos never
+  leave your device. Models: insightface buffalo_l (SCRFD-10G + ArcFace R100).
+</footer>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+<script src="pipeline.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

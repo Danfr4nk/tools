@@ -4,7 +4,18 @@ Compares the most prominent face in each of two photos and estimates whether
 the two people could be genetically related, returning a similarity score, a
 confidence score, and a plain-language verdict.
 
-## Usage
+## Web app
+
+**Live:** https://danfr4nk.github.io/tools/kinship/
+
+`index.html` + `app.js` + `pipeline.js` run the full pipeline in the browser
+via ONNX Runtime Web. All inference is local — photos are never uploaded. The
+17MB face detector and 1.3MB attribute model are bundled in `models/`; the
+174MB recognition model loads from HuggingFace (CORS-verified for this origin).
+The browser pipeline is numerically validated against the Python CLI
+(cosine within 4e-6, detection boxes within ~0.4px across 13 faces).
+
+## CLI usage
 
 ```bash
 ~/workspace/face-tag/venv/bin/python ~/workspace/kinship/kinship.py <photo_a> <photo_b>
