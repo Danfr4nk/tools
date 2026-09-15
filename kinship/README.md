@@ -14,6 +14,9 @@ via ONNX Runtime Web. All inference is local — photos are never uploaded. The
 174MB recognition model loads from HuggingFace (CORS-verified for this origin).
 The browser pipeline is numerically validated against the Python CLI
 (cosine within 4e-6, detection boxes within ~0.4px across 13 faces).
+Photos are downscaled to 1600px on the longest side before analysis (phone
+photos are far larger than the 640px detector / 112px recognition inputs
+need) — scores on very large photos may differ slightly from the CLI.
 
 ## CLI usage
 

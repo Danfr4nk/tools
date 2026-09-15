@@ -316,7 +316,8 @@ function verdict(s) {
 
 /* ---------------- full per-image pipeline ---------------- */
 
-async function embedImage(sessions, names, rgb, w, h, faceIndex = 0) {
+// Detection only: returns faces largest-first (bbox/score/kps rounded).
+async function detectFaces(sessions, names, rgb, w, h) {
   const lb = letterbox(rgb, w, h);
   const detOut = await sessions.det.run({ [names.detIn]: {
     dims: [1, 3, DET_SIZE, DET_SIZE], data: detInput(lb),
@@ -327,13 +328,17 @@ async function embedImage(sessions, names, rgb, w, h, faceIndex = 0) {
     return { data: t.data, dims: t.dims };
   });
   const faces = decodeDetections(outs, lb.detScale).filter(f => f.score >= DET_THRESH);
-  if (!faces.length) return { faces: [], error: 'no face detected (det_score >= 0.5)' };
   // largest first (matches CLI)
   faces.sort((a, b) =>
     ((b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1])) -
     ((a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1])));
-  const fi = Math.min(faceIndex, faces.length - 1);
-  const face = faces[fi];
+  return faces.map(f => ({ bbox: f.bbox, score: f.score, kps: f.kps }));
+}
+
+const r2 = v => +v.toFixed(2);
+
+// Embedding + attributes for one already-detected face.
+async function embedFace(sessions, names, rgb, w, h, face) {
   const aligned = alignFace(rgb, w, h, face.kps);
   const recOut = await sessions.rec.run({ [names.recIn]: {
     dims: [1, 3, 112, 112], data: recInput(aligned),
@@ -346,19 +351,24 @@ async function embedImage(sessions, names, rgb, w, h, faceIndex = 0) {
   } });
   const pred = gaOut[names.gaOut].data;
   const gender = pred[0] >= pred[1] ? 0 : 1;
-  const result = {
-    faces: faces.map(f => ({
-      bbox: f.bbox.map(v => +v.toFixed(2)),
-      score: +f.score.toFixed(4),
-      kps: f.kps.map(p => [+p[0].toFixed(2), +p[1].toFixed(2)]),
-    })),
-    faceIndex: fi,
+  return {
     embedding: Array.from(embedding, v => +v.toFixed(6)),
-    aligned: Array.from(aligned, v => Math.round(v)), // for numeric tests
     sex: gender === 1 ? 'M' : 'F',
     age: Math.round(pred[2] * 100),
   };
-  return result;
+}
+
+async function embedImage(sessions, names, rgb, w, h, faceIndex = 0) {
+  const faces = await detectFaces(sessions, names, rgb, w, h);
+  if (!faces.length) return { faces: [], error: 'no face detected (det_score >= 0.5)' };
+  const fi = Math.min(faceIndex, faces.length - 1);
+  const e = await embedFace(sessions, names, rgb, w, h, faces[fi]);
+  // rounded faces for display/test dumps; embedding used full-precision kps
+  const rf = faces.map(f => ({
+    bbox: f.bbox.map(r2), score: +f.score.toFixed(4),
+    kps: f.kps.map(p => [r2(p[0]), r2(p[1])]),
+  }));
+  return { faces: rf, faceIndex: fi, ...e, error: null };
 }
 
 function compareResults(a, b) {
@@ -390,7 +400,7 @@ const K = {
   bilinearResize, warpAffine, umeyama, letterbox, detInput,
   decodeDetections, nms, alignFace, recInput, l2norm,
   genderAgeCrop, genderAgeInput, cosine, confidence, verdict,
-  embedImage, compareResults,
+  detectFaces, embedFace, embedImage, compareResults,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = K;
 else if (typeof window !== 'undefined') window.KinshipPipeline = K;

@@ -16,10 +16,25 @@
 
   let sessions = null, names = null, modelsReady = false;
   const sides = {
-    A: { rgb: null, w: 0, h: 0, result: null, faceIndex: 0 },
-    B: { rgb: null, w: 0, h: 0, result: null, faceIndex: 0 },
+    A: { rgb: null, w: 0, h: 0, faces: null, faceIndex: 0, cache: {} },
+    B: { rgb: null, w: 0, h: 0, faces: null, faceIndex: 0, cache: {} },
   };
   let lastSide = 'A';
+
+  // Serialize all session.run calls: concurrent runs on one single-threaded
+  // WASM session can deadlock or OOM (observed as a permanent "comparing…").
+  let runQueue = Promise.resolve();
+  function queuedRun(runFn) {
+    const task = () => runFn();
+    const p = runQueue.then(task, task);
+    runQueue = p.catch(() => {});
+    return p;
+  }
+
+  // Surface anything that would otherwise hang the UI silently.
+  window.addEventListener('unhandledrejection', e => {
+    runstate.textContent = 'error: ' + String((e.reason && e.reason.message) || e.reason || e);
+  });
 
   async function fetchWithProgress(url, expected, onp) {
     const r = await fetch(url);
@@ -58,11 +73,11 @@
       mk('det', MODEL_URLS.det), mk('ga', MODEL_URLS.ga), mk('rec', MODEL_URLS.rec),
     ]);
     const T = (data, dims) => new ort.Tensor('float32', data, dims);
-    const wrap = s => ({ run: feeds => {
+    const wrap = s => ({ run: feeds => queuedRun(() => {
       const real = {};
       for (const [k, v] of Object.entries(feeds)) real[k] = T(v.data, v.dims);
       return s.run(real);
-    }});
+    })});
     sessions = { det: wrap(det), rec: wrap(rec), ga: wrap(ga) };
     names = {
       detIn: det.inputNames[0], detOut: det.outputNames,
@@ -80,11 +95,17 @@
       const url = URL.createObjectURL(file);
       const im = new Image();
       im.onload = () => {
-        const w = im.naturalWidth, h = im.naturalHeight;
+        // Cap resolution: the detector letterboxes to 640px and recognition
+        // aligns to 112px, so anything above ~1600px only costs memory and
+        // JS-side resample time (a 12MP phone photo = 146MB Float32Array).
+        const MAXD = 1600;
+        const sc = Math.min(1, MAXD / Math.max(im.naturalWidth, im.naturalHeight));
+        const w = Math.max(1, Math.round(im.naturalWidth * sc));
+        const h = Math.max(1, Math.round(im.naturalHeight * sc));
         const cv = document.createElement('canvas');
         cv.width = w; cv.height = h;
         const ctx = cv.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(im, 0, 0);
+        ctx.drawImage(im, 0, 0, w, h);
         const px = ctx.getImageData(0, 0, w, h).data;
         const rgb = new Float32Array(w * h * 3);
         for (let i = 0, j = 0; i < px.length; i += 4, j += 3) {
@@ -119,9 +140,9 @@
     off.getContext('2d').putImageData(img, 0, 0);
     ctx.drawImage(off, 0, 0, cv.width, cv.height);
     // face boxes
-    if (st.result && st.result.faces.length) {
+    if (st.faces && st.faces.length) {
       ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 2;
-      st.result.faces.forEach((f, i) => {
+      st.faces.forEach((f, i) => {
         const [x1, y1, x2, y2] = f.bbox;
         ctx.strokeStyle = i === st.faceIndex ? '#7dd3fc' : 'rgba(125,211,252,.35)';
         ctx.strokeRect(x1 * scale, y1 * scale, (x2 - x1) * scale, (y2 - y1) * scale);
@@ -134,8 +155,8 @@
     const st = sides[side];
     const box = $('faces' + side);
     box.innerHTML = '';
-    if (!st.result || st.result.faces.length < 2) return;
-    st.result.faces.forEach((f, i) => {
+    if (!st.faces || st.faces.length < 2) return;
+    st.faces.forEach((f, i) => {
       const b = document.createElement('button');
       b.textContent = 'face ' + (i + 1) + ' (' + f.score.toFixed(2) + ')';
       if (i === st.faceIndex) b.classList.add('on');
@@ -149,7 +170,7 @@
     runstate.textContent = 'reading photo ' + side + '…';
     try {
       const { rgb, w, h } = await loadImageFile(file);
-      Object.assign(sides[side], { rgb, w, h, result: null, faceIndex: 0 });
+      Object.assign(sides[side], { rgb, w, h, faces: null, cache: {}, faceIndex: 0 });
       drawPreview(side);
       if (modelsReady) await analyze(side);
       maybeCompare();
@@ -162,50 +183,68 @@
     const st = sides[side];
     if (!st.rgb || !modelsReady) return;
     runstate.textContent = 'analyzing photo ' + side + '…';
-    const r = await P.embedImage(sessions, names, st.rgb, st.w, st.h, 0);
-    if (r.error) {
-      runstate.textContent = 'photo ' + side + ': ' + r.error;
-      st.result = null;
-    } else {
-      // keep faces sorted largest-first (embedImage already does); store all
-      st.result = r;
-      st.faceIndex = 0;
-      runstate.textContent = '';
+    try {
+      const faces = await P.detectFaces(sessions, names, st.rgb, st.w, st.h);
+      if (!faces.length) {
+        runstate.textContent = 'photo ' + side + ': no face detected';
+        st.faces = null; st.cache = {};
+      } else {
+        st.faces = faces; st.faceIndex = 0; st.cache = {};
+        runstate.textContent = 'extracting face embedding (photo ' + side + ')…';
+        st.cache[0] = await P.embedFace(sessions, names, st.rgb, st.w, st.h, faces[0]);
+        runstate.textContent = '';
+      }
+    } catch (e) {
+      runstate.textContent = 'photo ' + side + ': ' + (e.message || e);
+      st.faces = null; st.cache = {};
     }
     renderFaceButtons(side);
     drawPreview(side);
   }
 
-  function currentEmbedding(side) {
-    // re-embed only if a non-largest face was picked (cheap: reuse path)
-    return null; // handled in maybeCompare via faceIndex re-run
+  // Embedding for the selected face; cached after analyze() so the common
+  // case (largest face) never re-runs inference in maybeCompare.
+  async function embeddingFor(side) {
+    const st = sides[side];
+    const idx = Math.min(st.faceIndex, st.faces.length - 1);
+    if (!st.cache[idx]) {
+      runstate.textContent = 'extracting face ' + (idx + 1) + ' embedding (photo ' + side + ')…';
+      st.cache[idx] = await P.embedFace(sessions, names, st.rgb, st.w, st.h, st.faces[idx]);
+    }
+    return st.cache[idx];
   }
 
   async function maybeCompare() {
     const A = sides.A, B = sides.B;
-    if (!modelsReady || !A.result || !B.result) return;
+    if (!modelsReady || !A.faces || !B.faces) return;
     runstate.textContent = 'comparing…';
-    // re-run embedding for the selected faces
-    const [ra, rb] = await Promise.all([
-      P.embedImage(sessions, names, A.rgb, A.w, A.h, A.faceIndex),
-      P.embedImage(sessions, names, B.rgb, B.w, B.h, B.faceIndex),
-    ]);
-    const cmp = P.compareResults(ra, rb);
-    $('rCos').textContent = cmp.cosine_similarity.toFixed(4);
-    $('rConf').textContent = (cmp.kinship_confidence * 100).toFixed(1) + '%';
-    $('rConfBar').style.width = (cmp.kinship_confidence * 100) + '%';
-    $('rVerdict').textContent = cmp.verdict;
-    $('rNote').textContent = cmp.verdict_note;
-    $('rCaveats').innerHTML = cmp.caveats.map(c =>
-      '<div class="cav">' + c.replace(/</g, '&lt;') + '</div>').join('');
-    $('rMeta').textContent =
-      'faces: A=' + cmp.faces_detected.a + ' (score ' + cmp.detection_scores.a.toFixed(2) +
-      ', ' + ra.sex + '/' + ra.age + ')  B=' + cmp.faces_detected.b +
-      ' (score ' + cmp.detection_scores.b.toFixed(2) + ', ' + rb.sex + '/' + rb.age + '). ' +
-      cmp.calibration;
-    $('result').classList.add('show');
-    runstate.textContent = '';
-    drawPreview('A'); drawPreview('B');
+    try {
+      // Sequential on purpose: see the runQueue note above.
+      const ea = await embeddingFor('A');
+      const eb = await embeddingFor('B');
+      const a = { embedding: ea.embedding, sex: ea.sex, age: ea.age,
+                  faces: A.faces, faceIndex: A.faceIndex };
+      const b = { embedding: eb.embedding, sex: eb.sex, age: eb.age,
+                  faces: B.faces, faceIndex: B.faceIndex };
+      const cmp = P.compareResults(a, b);
+      $('rCos').textContent = cmp.cosine_similarity.toFixed(4);
+      $('rConf').textContent = (cmp.kinship_confidence * 100).toFixed(1) + '%';
+      $('rConfBar').style.width = (cmp.kinship_confidence * 100) + '%';
+      $('rVerdict').textContent = cmp.verdict;
+      $('rNote').textContent = cmp.verdict_note;
+      $('rCaveats').innerHTML = cmp.caveats.map(c =>
+        '<div class="cav">' + c.replace(/</g, '&lt;') + '</div>').join('');
+      $('rMeta').textContent =
+        'faces: A=' + cmp.faces_detected.a + ' (score ' + cmp.detection_scores.a.toFixed(2) +
+        ', ' + ea.sex + '/' + ea.age + ')  B=' + cmp.faces_detected.b +
+        ' (score ' + cmp.detection_scores.b.toFixed(2) + ', ' + eb.sex + '/' + eb.age + '). ' +
+        cmp.calibration;
+      $('result').classList.add('show');
+      runstate.textContent = '';
+      drawPreview('A'); drawPreview('B');
+    } catch (e) {
+      runstate.textContent = 'comparison failed: ' + (e.message || e);
+    }
   }
 
   function wire(side) {
