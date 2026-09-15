@@ -1,0 +1,717 @@
+[
+ {
+  "baseIdx": 26,
+  "baseId": "b26",
+  "baseDesc": "you meet her ex alone while she's away",
+  "modifiers": [
+   {
+    "text": "he puts his hand on your thigh",
+    "theme": "ACT"
+   },
+   {
+    "text": "you end up making out",
+    "theme": "ACT"
+   },
+   {
+    "text": "he talks about her the whole time",
+    "theme": "TONE"
+   },
+   {
+    "text": "he's openly hostile about you dating her",
+    "theme": "TONE"
+   },
+   {
+    "text": "she calls mid-meet and you answer on speaker",
+    "theme": "SEEN"
+   },
+   {
+    "text": "a mutual friend spots you two together",
+    "theme": "SEEN"
+   },
+   {
+    "text": "you tell her everything that night",
+    "theme": "AFTER"
+   },
+   {
+    "text": "you keep it secret from her forever",
+    "theme": "AFTER"
+   },
+   {
+    "text": "you meet at his place instead of neutral ground",
+    "theme": "WHERE"
+   },
+   {
+    "text": "it's at your place instead",
+    "theme": "WHERE"
+   },
+   {
+    "text": "he brings his new girlfriend along",
+    "theme": "WHO"
+   },
+   {
+    "text": "you bring a friend as backup",
+    "theme": "WHO"
+   }
+  ]
+ },
+ {
+  "baseIdx": 27,
+  "baseId": "b27",
+  "baseDesc": "she watches you and her ex together",
+  "modifiers": [
+   {
+    "text": "he goes down on you first",
+    "theme": "ACT"
+   },
+   {
+    "text": "she directs the two of you from her chair",
+    "theme": "ACT"
+   },
+   {
+    "text": "he's clearly into you, not performing for her",
+    "theme": "TONE"
+   },
+   {
+    "text": "she looks jealous instead of turned on",
+    "theme": "TONE"
+   },
+   {
+    "text": "she films it on her phone",
+    "theme": "SEEN"
+   },
+   {
+    "text": "he cums on your chest where she can see",
+    "theme": "FLUID"
+   },
+   {
+    "text": "you cum in his mouth while she watches",
+    "theme": "FLUID"
+   },
+   {
+    "text": "it happens in your bed",
+    "theme": "WHERE"
+   },
+   {
+    "text": "it happens at his place",
+    "theme": "WHERE"
+   },
+   {
+    "text": "he brings a friend to watch too",
+    "theme": "WHO"
+   },
+   {
+    "text": "it's a different ex, one you've never met",
+    "theme": "WHO"
+   },
+   {
+    "text": "the three of you talk about it over drinks after",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 28,
+  "baseId": "b28",
+  "baseDesc": "amateur tape: a real couple's homemade video \u2014 she begs you to make one just like it",
+  "modifiers": [
+   {
+    "text": "their tape is mostly her giving head",
+    "theme": "ACT"
+   },
+   {
+    "text": "you agree but only if faces stay out of frame",
+    "theme": "ACT"
+   },
+   {
+    "text": "she wants it exactly like theirs, no improvising",
+    "theme": "TONE"
+   },
+   {
+    "text": "she wants yours rougher than theirs",
+    "theme": "TONE"
+   },
+   {
+    "text": "you post yours anonymously online after",
+    "theme": "SEEN"
+   },
+   {
+    "text": "their tape gets recognized by someone you know",
+    "theme": "SEEN"
+   },
+   {
+    "text": "their video ends with a facial",
+    "theme": "FLUID"
+   },
+   {
+    "text": "you shoot yours outdoors at night",
+    "theme": "WHERE"
+   },
+   {
+    "text": "their tape has a third person in it",
+    "theme": "WHO"
+   },
+   {
+    "text": "she wants her friend to film yours",
+    "theme": "WHO"
+   },
+   {
+    "text": "you watch yours together the next morning",
+    "theme": "AFTER"
+   },
+   {
+    "text": "you delete yours right after filming",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 29,
+  "baseId": "b29",
+  "baseDesc": "anal: she takes him anal while you watch \u2014 first time she's ever done it",
+  "modifiers": [
+   {
+    "text": "she's the one who asked for it",
+    "theme": "ACT"
+   },
+   {
+    "text": "he goes slow and checks on her constantly",
+    "theme": "ACT"
+   },
+   {
+    "text": "she's nervous but determined",
+    "theme": "TONE"
+   },
+   {
+    "text": "she loves it immediately and wants more",
+    "theme": "TONE"
+   },
+   {
+    "text": "he cums inside her ass",
+    "theme": "FLUID"
+   },
+   {
+    "text": "he pulls out and finishes on her back",
+    "theme": "FLUID"
+   },
+   {
+    "text": "you film her face the whole time",
+    "theme": "SEEN"
+   },
+   {
+    "text": "it happens on your couch instead of the bed",
+    "theme": "WHERE"
+   },
+   {
+    "text": "it's a woman with a strap-on instead",
+    "theme": "WHO"
+   },
+   {
+    "text": "you join in instead of just watching",
+    "theme": "WHO"
+   },
+   {
+    "text": "she won't stop talking about it after",
+    "theme": "AFTER"
+   },
+   {
+    "text": "she cries a little after and you hold her",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 30,
+  "baseId": "b30",
+  "baseDesc": "massage parlor: she gets the happy ending, you're in the next room listening",
+  "modifiers": [
+   {
+    "text": "the happy ending turns into full service",
+    "theme": "ACT"
+   },
+   {
+    "text": "it goes longer than the paid time",
+    "theme": "ACT"
+   },
+   {
+    "text": "she moans loud enough for the whole parlor",
+    "theme": "TONE"
+   },
+   {
+    "text": "she's shy and barely makes a sound",
+    "theme": "TONE"
+   },
+   {
+    "text": "you hear her finish him with her mouth",
+    "theme": "FLUID"
+   },
+   {
+    "text": "she knows you're listening and plays it up",
+    "theme": "SEEN"
+   },
+   {
+    "text": "it's a luxury spa instead of a strip-mall parlor",
+    "theme": "WHERE"
+   },
+   {
+    "text": "you're in the waiting room, not the next room",
+    "theme": "WHERE"
+   },
+   {
+    "text": "the masseur is a woman instead of a man",
+    "theme": "WHO"
+   },
+   {
+    "text": "a second masseur joins her",
+    "theme": "WHO"
+   },
+   {
+    "text": "she describes every detail on the drive home",
+    "theme": "AFTER"
+   },
+   {
+    "text": "she's embarrassed and won't talk about it",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 31,
+  "baseId": "b31",
+  "baseDesc": "babysitter role play: she's the babysitter, he's the dad, you're filming",
+  "modifiers": [
+   {
+    "text": "the 'dad' stays fully in character the whole time",
+    "theme": "ACT"
+   },
+   {
+    "text": "she breaks character laughing halfway through",
+    "theme": "ACT"
+   },
+   {
+    "text": "the scene plays stern and disciplinary",
+    "theme": "TONE"
+   },
+   {
+    "text": "the scene plays sweet and coaxing instead",
+    "theme": "TONE"
+   },
+   {
+    "text": "you livestream it to a private group",
+    "theme": "SEEN"
+   },
+   {
+    "text": "you put the camera down and join the scene",
+    "theme": "SEEN"
+   },
+   {
+    "text": "he finishes on her babysitter uniform",
+    "theme": "FLUID"
+   },
+   {
+    "text": "you shoot it at his actual house",
+    "theme": "WHERE"
+   },
+   {
+    "text": "a 'mom' character walks in mid-scene",
+    "theme": "WHO"
+   },
+   {
+    "text": "the 'dad' is played by her real ex",
+    "theme": "WHO"
+   },
+   {
+    "text": "you all watch the footage together after",
+    "theme": "AFTER"
+   },
+   {
+    "text": "she stays in the babysitter outfit all night",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 32,
+  "baseId": "b32",
+  "baseDesc": "bbw: her big beautiful friend joins you two, Annie calls the shots",
+  "modifiers": [
+   {
+    "text": "Annie has the friend focus on you",
+    "theme": "ACT"
+   },
+   {
+    "text": "Annie has you focus on the friend",
+    "theme": "ACT"
+   },
+   {
+    "text": "the friend sits on your face on Annie's orders",
+    "theme": "ACT"
+   },
+   {
+    "text": "Annie is bossy and commanding the whole time",
+    "theme": "TONE"
+   },
+   {
+    "text": "Annie is sweet and encouraging instead",
+    "theme": "TONE"
+   },
+   {
+    "text": "Annie draws it out for hours, no rushing",
+    "theme": "TONE"
+   },
+   {
+    "text": "it's a busty stranger instead of her friend",
+    "theme": "WHO"
+   },
+   {
+    "text": "Annie films the friend's reactions for later",
+    "theme": "SEEN"
+   },
+   {
+    "text": "you finish on the friend's chest",
+    "theme": "FLUID"
+   },
+   {
+    "text": "it happens at the friend's place",
+    "theme": "WHERE"
+   },
+   {
+    "text": "the three of you get brunch the next morning",
+    "theme": "AFTER"
+   },
+   {
+    "text": "Annie replays her favorite moment for weeks",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 33,
+  "baseId": "b33",
+  "baseDesc": "porn set visit: she gets pulled into a scene, you watch from video village",
+  "modifiers": [
+   {
+    "text": "her scene partner is a woman",
+    "theme": "ACT"
+   },
+   {
+    "text": "it's a hardcore scene, not softcore",
+    "theme": "ACT"
+   },
+   {
+    "text": "the director coaches her through an earpiece",
+    "theme": "TONE"
+   },
+   {
+    "text": "she's a natural and steals the scene",
+    "theme": "TONE"
+   },
+   {
+    "text": "the footage actually airs on the site",
+    "theme": "SEEN"
+   },
+   {
+    "text": "you're invited onto the set floor mid-scene",
+    "theme": "SEEN"
+   },
+   {
+    "text": "the scene ends with a creampie on camera",
+    "theme": "FLUID"
+   },
+   {
+    "text": "the scene shoots outdoors on location",
+    "theme": "WHERE"
+   },
+   {
+    "text": "her scene partner is a famous male star",
+    "theme": "WHO"
+   },
+   {
+    "text": "you get pulled into the scene too",
+    "theme": "WHO"
+   },
+   {
+    "text": "she gets offered a contract on the spot",
+    "theme": "AFTER"
+   },
+   {
+    "text": "you two reenact the scene at home that night",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 34,
+  "baseId": "b34",
+  "baseDesc": "club: she grinds on a stranger's lap, you watch from the bar",
+  "modifiers": [
+   {
+    "text": "she takes him to the dance floor bathroom",
+    "theme": "ACT"
+   },
+   {
+    "text": "he keeps his hands respectful the whole time",
+    "theme": "ACT"
+   },
+   {
+    "text": "she's showing off for you, not into him",
+    "theme": "TONE"
+   },
+   {
+    "text": "she's genuinely into him and forgets you",
+    "theme": "TONE"
+   },
+   {
+    "text": "his friends are watching and cheering",
+    "theme": "SEEN"
+   },
+   {
+    "text": "you film her from the bar",
+    "theme": "SEEN"
+   },
+   {
+    "text": "it's a strip club, not a dance club",
+    "theme": "WHERE"
+   },
+   {
+    "text": "it happens in the VIP section",
+    "theme": "WHERE"
+   },
+   {
+    "text": "the stranger is with his girlfriend",
+    "theme": "WHO"
+   },
+   {
+    "text": "it's two strangers taking turns",
+    "theme": "WHO"
+   },
+   {
+    "text": "she's embarrassed about it the next day",
+    "theme": "AFTER"
+   },
+   {
+    "text": "you go home and fuck immediately",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 35,
+  "baseId": "b35",
+  "baseDesc": "big dick: she takes a famously huge stranger, you hold her hand",
+  "modifiers": [
+   {
+    "text": "she can only take half of him",
+    "theme": "ACT"
+   },
+   {
+    "text": "she takes all of him on the first try",
+    "theme": "ACT"
+   },
+   {
+    "text": "she's scared but begs him to keep going",
+    "theme": "TONE"
+   },
+   {
+    "text": "she handles him like it's nothing",
+    "theme": "TONE"
+   },
+   {
+    "text": "he cums on her tits",
+    "theme": "FLUID"
+   },
+   {
+    "text": "she sucks him off after",
+    "theme": "FLUID"
+   },
+   {
+    "text": "his reputation drew a small crowd",
+    "theme": "SEEN"
+   },
+   {
+    "text": "you film her face when he first enters",
+    "theme": "SEEN"
+   },
+   {
+    "text": "it happens backstage at his show",
+    "theme": "WHERE"
+   },
+   {
+    "text": "it's her ex with the reputation, not a stranger",
+    "theme": "WHO"
+   },
+   {
+    "text": "she's sore for two days",
+    "theme": "AFTER"
+   },
+   {
+    "text": "she brags to her friends about it",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 36,
+  "baseId": "b36",
+  "baseDesc": "pool party: her busty friend goes topless, things escalate",
+  "modifiers": [
+   {
+    "text": "the friend pulls you into the pool",
+    "theme": "ACT"
+   },
+   {
+    "text": "she joins in topless too",
+    "theme": "ACT"
+   },
+   {
+    "text": "it's playful and giggly, not serious",
+    "theme": "TONE"
+   },
+   {
+    "text": "it turns intense fast",
+    "theme": "TONE"
+   },
+   {
+    "text": "the neighbors are watching from their deck",
+    "theme": "SEEN"
+   },
+   {
+    "text": "someone's filming on their phone",
+    "theme": "SEEN"
+   },
+   {
+    "text": "she swallows you in the hot tub later",
+    "theme": "FLUID"
+   },
+   {
+    "text": "it moves to the hot tub",
+    "theme": "WHERE"
+   },
+   {
+    "text": "it moves inside to the bedroom",
+    "theme": "WHERE"
+   },
+   {
+    "text": "the friend's boyfriend joins in",
+    "theme": "WHO"
+   },
+   {
+    "text": "it's a different friend, one you don't like",
+    "theme": "WHO"
+   },
+   {
+    "text": "the friend pretends it never happened after",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 37,
+  "baseId": "b37",
+  "baseDesc": "bisexual: he goes down on you while she kisses him over your shoulder",
+  "modifiers": [
+   {
+    "text": "he deepthroats you",
+    "theme": "ACT"
+   },
+   {
+    "text": "she reaches around and strokes you too",
+    "theme": "ACT"
+   },
+   {
+    "text": "he's worshipful and slow",
+    "theme": "TONE"
+   },
+   {
+    "text": "it's aggressive and porn-like",
+    "theme": "TONE"
+   },
+   {
+    "text": "he swallows",
+    "theme": "FLUID"
+   },
+   {
+    "text": "you cum on his face",
+    "theme": "FLUID"
+   },
+   {
+    "text": "she films his face while he works",
+    "theme": "SEEN"
+   },
+   {
+    "text": "it happens in the backseat of the car",
+    "theme": "WHERE"
+   },
+   {
+    "text": "he's a stranger, not someone you know",
+    "theme": "WHO"
+   },
+   {
+    "text": "she swaps places with him halfway",
+    "theme": "WHO"
+   },
+   {
+    "text": "the two of them kiss properly after, you watch",
+    "theme": "AFTER"
+   },
+   {
+    "text": "he stays the night",
+    "theme": "AFTER"
+   }
+  ]
+ },
+ {
+  "baseIdx": 38,
+  "baseId": "b38",
+  "baseDesc": "blonde weekend: she goes blonde and plays dumb while he has his way",
+  "modifiers": [
+   {
+    "text": "he's rough with her the whole weekend",
+    "theme": "ACT"
+   },
+   {
+    "text": "she drops the dumb act when they fuck",
+    "theme": "ACT"
+   },
+   {
+    "text": "the dumb act is played for laughs",
+    "theme": "TONE"
+   },
+   {
+    "text": "it's played straight and humiliating",
+    "theme": "TONE"
+   },
+   {
+    "text": "you film her dumb-blonde debut",
+    "theme": "SEEN"
+   },
+   {
+    "text": "he cums in her hair",
+    "theme": "FLUID"
+   },
+   {
+    "text": "she drools on his cock",
+    "theme": "FLUID"
+   },
+   {
+    "text": "the whole weekend happens at a cabin",
+    "theme": "WHERE"
+   },
+   {
+    "text": "he's her ex playing along",
+    "theme": "WHO"
+   },
+   {
+    "text": "a second guy joins on day two",
+    "theme": "WHO"
+   },
+   {
+    "text": "she keeps the blonde for months",
+    "theme": "AFTER"
+   },
+   {
+    "text": "she refuses to ever do it again",
+    "theme": "AFTER"
+   }
+  ]
+ }
+]

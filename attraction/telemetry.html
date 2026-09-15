@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>telemetry lab — facial preference mapping</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="telemetry.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><a href="index.html" class="backlink">← instruments</a> <span class="brand-name">telemetry lab</span></div>
+  <div class="topbar-sub">precision facial measurement · same detector as the instrument · outside the game</div>
+  <div id="modelStatus" class="model-status">loading…</div>
+</header>
+
+<main class="lab">
+  <section class="card uploader-card">
+    <h2>upload</h2>
+    <div id="dropzone" class="dropzone">
+      <p>drop portraits here, or</p>
+      <label class="filebtn">choose files<input type="file" id="fileInput" accept="image/*" multiple></label>
+      <p class="hint">frontal, neutral, unobstructed faces measure best. the lab scores pose quality per image and flags weak ones.</p>
+      <p class="hint calib">optional calibration — known IPD in mm overrides the iris anchor:
+        <input type="number" id="calibIpd" min="40" max="90" step="0.5" placeholder="e.g. 63" class="calib-input"></p>
+      <p class="hint calib"><label for="bgTag">background <span style="color:var(--dim)">(optional tag, exported with the metrics)</span></label>
+        <select id="bgTag" class="calib-input" style="min-width:170px">
+          <option value="">unspecified</option>
+          <option>Asian</option><option>Black</option><option>Caucasian</option>
+          <option>Latina</option><option>Middle Eastern</option>
+          <option>South Asian</option><option>mixed / other</option>
+        </select></p>
+    </div>
+    <div id="history" class="history"></div>
+    <p class="hint">tick the checkboxes on up to two thumbnails to a/b them — per-metric deltas appear below. ticking a third drops the oldest pick.</p>
+  </section>
+
+  <section class="card viewer-card" id="viewerCard" hidden>
+    <div class="viewer-head">
+      <h2 id="viewTitle">analysis</h2>
+      <div class="layers">
+        <label><input type="checkbox" id="layerMesh" checked> mesh</label>
+        <label><input type="checkbox" id="layerMetrics" checked> metrics</label>
+        <label><input type="checkbox" id="layerThirds" checked> thirds</label>
+        <label><input type="checkbox" id="layerMidline" checked> midline</label>
+        <label><input type="checkbox" id="layerFifths" checked> fifths</label>
+        <label><input type="checkbox" id="layerIris" checked> iris</label>
+        <label><input type="checkbox" id="layerDims" checked> dims</label>
+        <label><input type="checkbox" id="layerGrid"> grid</label>
+      </div>
+    </div>
+    <div class="viewer-body">
+      <div class="canvas-wrap"><canvas id="overlay"></canvas></div>
+      <div class="quality" id="qualityBox"></div>
+    </div>
+  </section>
+
+  <section class="card metrics-card" id="metricsCard" hidden>
+    <h2>telemetry vector <span class="vec-count" id="vecCount"></span></h2>
+    <div id="metricGroups"></div>
+  </section>
+
+  <section class="card compare-card" id="compareCard" hidden>
+    <h2>a/b delta</h2>
+    <p class="hint" id="compareNames"></p>
+    <div class="table-wrap"><table id="deltaTable">
+      <thead><tr><th>metric</th><th id="colA">a</th><th id="colB">b</th><th>Δ (b−a) ± 95%</th><th>Δ%</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section class="card export-card" id="exportCard" hidden>
+    <h2>export</h2>
+    <div class="row">
+      <button id="btnJson" class="btn">download json</button>
+      <button id="btnCsv" class="btn">download csv</button>
+      <button id="btnPng" class="btn">download png</button>
+      <button id="btnWire" class="btn">wireframe png</button>
+      <button id="btnCopy" class="btn">copy summary</button>
+    </div>
+  </section>
+
+  <section class="card method-card">
+    <details>
+      <summary><h2>method — every formula, every landmark</h2></summary>
+      <div id="methodBody" class="method-body"></div>
+    </details>
+  </section>
+</main>
+
+<script type="importmap">
+{ "imports": { "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm" } }
+</script>
+<script type="module" src="js/telemetry.js"></script>
+</body>
+</html>

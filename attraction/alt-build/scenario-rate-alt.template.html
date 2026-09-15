@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scenario ratings alt — rank, then react</title>
+<style>
+  :root { --bg:#101216; --panel:#181b21; --line:#2a2e37; --txt:#e8eaf0; --dim:#9aa0ad; --acc:#7fd08c; --veto:#e06c75; --pick:#61afef; --gold:#e5c07b; --vio:#c678dd; }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--txt); font-family:-apple-system,system-ui,sans-serif; margin:0; padding:0 14px 80px; }
+  .wrap { max-width:760px; margin:0 auto; }
+  header { padding:26px 0 6px; }
+  h1 { font-size:21px; margin:0 0 6px; } h1 .v { color:var(--dim); font-weight:400; font-size:14px; }
+  .lede { color:var(--dim); font-size:13.5px; line-height:1.55; margin:0 0 4px; }
+  .lede b { color:var(--txt); font-weight:600; }
+  #prog { height:6px; background:var(--line); border-radius:3px; margin:14px 0 6px; overflow:hidden; }
+  #prog > div { height:100%; background:var(--acc); width:0; transition:width .2s; }
+  #progText { color:var(--dim); font-size:13px; margin-bottom:16px; }
+  .group { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+  .gbase { font-weight:700; font-size:15.5px; margin-bottom:10px; }
+  .gbase .gtag { color:var(--vio); font-size:11.5px; font-weight:600; display:block; margin-bottom:2px; }
+  .scale { display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
+  .scale button { min-width:34px; height:34px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--dim); font-size:13.5px; cursor:pointer; padding:0 6px; }
+  .scale button:hover { border-color:var(--pick); color:var(--pick); }
+  .scale button.on { background:var(--pick); border-color:var(--pick); color:#0b0d10; font-weight:700; }
+  .scale button.vetoBtn { border-color:var(--veto); color:var(--veto); min-width:40px; }
+  .scale button.vetoBtn.on { background:var(--veto); color:#0b0d10; }
+  .scale button.xBtn { border-color:var(--gold); color:var(--gold); min-width:40px; }
+  .scale button.xBtn.on { background:var(--gold); color:#0b0d10; font-weight:700; }
+  .scale button.noteBtn { min-width:40px; }
+  .scale button.noteBtn.on { border-color:var(--vio); color:var(--vio); font-weight:700; }
+  .rowx { opacity:.45; }
+  .rowx .scale button { pointer-events:none; }
+  .rowx .scale button.xBtn, .rowx .scale button.noteBtn { pointer-events:auto; opacity:1; }
+  .notewrap { margin-top:8px; }
+  .notewrap.hidden { display:none; }
+  .notewrap textarea { width:100%; min-height:56px; box-sizing:border-box; background:#0d0f13; color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:8px; font-size:13.5px; font-family:inherit; resize:vertical; }
+  .notewrap textarea:focus { outline:none; border-color:var(--vio); }
+  .mods { margin-top:12px; border-top:1px solid var(--line); padding-top:6px; }
+  .mods.hidden { display:none; }
+  .mods .mhead { color:var(--dim); font-size:12px; letter-spacing:.08em; margin:8px 0 6px; }
+  .amod { border-top:1px solid var(--line); padding:9px 0 9px 12px; border-left:3px solid var(--acc); margin-top:6px; }
+  .amod .mtag { color:var(--dim); font-size:11px; display:block; margin-bottom:2px; letter-spacing:.06em; }
+  .amod .mdesc { font-size:14px; margin-bottom:7px; }
+  .vscale { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .vscale button { height:32px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--dim); font-size:12.5px; font-weight:600; cursor:pointer; padding:0 12px; letter-spacing:.04em; }
+  .vscale button:hover { border-color:var(--pick); color:var(--pick); }
+  .vscale button.on-love { background:var(--acc); border-color:var(--acc); color:#0b0d10; }
+  .vscale button.on-like { background:var(--pick); border-color:var(--pick); color:#0b0d10; }
+  .vscale button.on-meh { background:var(--dim); border-color:var(--dim); color:#0b0d10; }
+  .vscale button.on-noway { background:var(--veto); border-color:var(--veto); color:#0b0d10; }
+  .vscale button.mini { padding:0 8px; font-weight:400; }
+  .vscale button.mini.on { border-color:var(--gold); color:var(--gold); }
+  .btnrow { display:flex; gap:10px; margin:20px 0; flex-wrap:wrap; }
+  .btnrow button { padding:10px 16px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--txt); cursor:pointer; font-size:14px; }
+  .btnrow button:hover { border-color:var(--pick); }
+  .btnrow button.primary { border-color:var(--acc); color:var(--acc); font-weight:700; }
+  .hidden { display:none; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; margin:10px 0 18px; }
+  th { text-align:left; color:var(--dim); font-weight:600; font-size:12px; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .bar { display:inline-block; height:10px; background:var(--acc); border-radius:2px; vertical-align:middle; margin-right:8px; }
+  .bar.neg { background:var(--veto); }
+  h3 { font-size:15px; margin:22px 0 4px; color:#fff; }
+  .conf { color:var(--dim); font-size:12.5px; }
+  .verdict p { margin:6px 0; }
+  .ok { color:var(--acc); } .bad { color:var(--veto); } .mid { color:var(--dim); } .soft { color:var(--gold); }
+  .wdb { background:#1d1214; border:1px solid var(--veto); border-radius:8px; padding:10px 14px; margin:8px 0; font-size:13.5px; }
+  .wdb .wb { color:var(--dim); font-size:12px; display:block; margin-bottom:2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>scenario ratings <span class="v">alt — rank, then react</span></h1>
+    <p class="lede">
+      Rate each situation <b>1–10</b> first — gut answer. Then it opens its <b>12 variations</b>,
+      each one a change that actually makes sense in that situation. For each variation pick
+      <b>LOVE</b> / <b>LIKE</b> / <b>MEH</b> / <b>NO WAY</b>.
+      <b>MEH</b> = no score, neutral. <b>NO WAY</b> = lands in the wouldn't-do bucket.
+      <b>∅</b> vetoes a line out of scoring entirely. <b>✎</b> adds a private note.
+    </p>
+    <div id="prog"><div></div></div>
+    <div id="progText"></div>
+  </header>
+
+  <div id="rateView">
+    <div id="items"></div>
+    <div class="btnrow">
+      <button class="primary" id="finishBtn">done — show my readout</button>
+      <button id="restartBtn">restart</button>
+    </div>
+  </div>
+
+  <div id="doneView" class="hidden">
+    <div class="verdict" id="verdictBox"></div>
+    <h3>variation tallies</h3>
+    <div id="tallyBox"></div>
+    <h3>by theme — what kinds of changes move the needle</h3>
+    <div id="themeBox"></div>
+    <h3>wouldn't-do bucket</h3>
+    <div id="wdBox"></div>
+    <h3>most loved variations</h3>
+    <div id="loveBox"></div>
+    <div class="btnrow">
+      <button class="primary" id="dlBtn">download json</button>
+      <button id="backBtn">back to rating</button>
+      <button id="restartBtn2">restart</button>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+/*__ALTMODS__*/
+const LS_KEY = "scen_rate_alt";
+const VALS = { love: 2, like: 1, meh: 0, noway: -1 };
+const VLABELS = ["LOVE", "LIKE", "MEH", "NO WAY"];
+const VKEYS = ["love", "like", "meh", "noway"];
+
+let items = [];   // {id, kind: base|amod, baseId, desc, theme}
+function buildItems() {
+  items = [];
+  for (const b of ALTMODS) {
+    items.push({ id: b.baseId, kind: "base", desc: b.baseDesc, gdesc: b.baseDesc });
+    b.modifiers.forEach((m, i) => {
+      items.push({ id: b.baseId + "a" + i, kind: "amod", baseId: b.baseId,
+        gdesc: b.baseDesc, desc: m.text, theme: m.theme });
+    });
+  }
+}
+
+const $ = (id) => document.getElementById(id);
+let ratings = {};   // base: 0 (veto) | 1..10 ; amod: 2|1|0|-1
+try { ratings = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch (e) { ratings = {}; }
+function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(ratings)); } catch (e) {} }
+const X_KEY = LS_KEY + "_x", N_KEY = LS_KEY + "_notes";
+let excluded = {}, notes = {};
+try { excluded = JSON.parse(localStorage.getItem(X_KEY) || "{}"); } catch (e) { excluded = {}; }
+try { notes = JSON.parse(localStorage.getItem(N_KEY) || "{}"); } catch (e) { notes = {}; }
+function saveX() { try { localStorage.setItem(X_KEY, JSON.stringify(excluded)); } catch (e) {} }
+function saveNotes() { try { localStorage.setItem(N_KEY, JSON.stringify(notes)); } catch (e) {} }
+const noteOpen = {};
+
+function updateProg() {
+  const done = items.filter(it => ratings[it.id] !== undefined || excluded[it.id]).length;
+  const xc = items.filter(it => excluded[it.id]).length;
+  $("progText").textContent = `${done} / ${items.length} answered` + (xc ? ` · ${xc} line-vetoed` : "");
+  document.querySelector("#prog > div").style.width = (items.length ? done / items.length * 100 : 0) + "%";
+}
+function rate(id, val) {
+  if (excluded[id]) return;
+  ratings[id] = val;
+  save(); paint(id); updateProg();
+}
+function toggleX(id) {
+  if (excluded[id]) delete excluded[id]; else excluded[id] = true;
+  saveX(); paint(id); updateProg();
+}
+function paint(id) {
+  const v = ratings[id];
+  const row = document.querySelector(`[data-row="${id}"]`);
+  if (!row) return;
+  row.classList.toggle("rowx", !!excluded[id]);
+  /* base scale buttons */
+  row.querySelectorAll(`[data-item="${id}"] button`).forEach(b => {
+    if (b.dataset.v === "x" || b.dataset.v === "note") return;
+    const bv = b.dataset.v === "veto" ? 0 : parseInt(b.dataset.v, 10);
+    b.classList.toggle("on", v !== undefined && bv === v);
+  });
+  /* modifier verdict buttons */
+  row.querySelectorAll(`[data-verdict="${id}"] button`).forEach(b => {
+    if (b.dataset.v === "x" || b.dataset.v === "note") return;
+    b.classList.remove("on-love", "on-like", "on-meh", "on-noway");
+    if (v !== undefined && b.dataset.v === String(v)) {
+      b.classList.add({ "2": "on-love", "1": "on-like", "0": "on-meh", "-1": "on-noway" }[String(v)]);
+    }
+  });
+  const xb = row.querySelector(`button[data-v="x"]`);
+  if (xb) xb.classList.toggle("on", !!excluded[id]);
+  const open = noteOpen[id] || (notes[id] && notes[id].trim() !== "");
+  const nb = row.querySelector(`button[data-v="note"]`);
+  if (nb) nb.classList.toggle("on", !!open);
+  const nw = row.querySelector(".notewrap");
+  if (nw) nw.classList.toggle("hidden", !open);
+  /* reveal a base's variations once the base is rated */
+  const it = items.find(x => x.id === id);
+  if (it && it.kind === "base") {
+    const mb = row.querySelector(".mods");
+    if (mb) mb.classList.toggle("hidden", ratings[id] === undefined);
+  }
+}
+function noteWrap(row, id) {
+  const nw = document.createElement("div");
+  nw.className = "notewrap hidden";
+  const ta = document.createElement("textarea");
+  ta.placeholder = "why? say more… (private, saved with your export)";
+  ta.value = notes[id] || "";
+  ta.oninput = () => { const t = ta.value.trim(); if (t) notes[id] = ta.value; else delete notes[id]; saveNotes(); };
+  nw.appendChild(ta);
+  row.appendChild(nw);
+}
+function miniBtns(row, id) {
+  const xo = document.createElement("button");
+  xo.textContent = "∅"; xo.dataset.v = "x"; xo.className = "mini"; xo.title = "veto this line — won't count in scoring";
+  xo.onclick = () => toggleX(id);
+  const nb = document.createElement("button");
+  nb.textContent = "✎"; nb.dataset.v = "note"; nb.className = "mini"; nb.title = "explain this one";
+  nb.onclick = () => { noteOpen[id] = !noteOpen[id]; paint(id); };
+  return [xo, nb];
+}
+function render() {
+  const box = $("items");
+  box.innerHTML = "";
+  for (const b of ALTMODS) {
+    const gdiv = document.createElement("div");
+    gdiv.className = "group";
+    /* base row */
+    const row = document.createElement("div");
+    row.dataset.row = b.baseId;
+    const gb = document.createElement("div");
+    gb.className = "gbase";
+    const tag = document.createElement("span");
+    tag.className = "gtag"; tag.textContent = "situation — rate 1–10 first";
+    gb.appendChild(tag);
+    gb.appendChild(document.createTextNode(b.baseDesc));
+    row.appendChild(gb);
+    const sc = document.createElement("div");
+    sc.className = "scale"; sc.dataset.item = b.baseId;
+    for (let s = 1; s <= 10; s++) {
+      const btn = document.createElement("button");
+      btn.textContent = s; btn.dataset.v = s;
+      btn.onclick = () => rate(b.baseId, s);
+      sc.appendChild(btn);
+    }
+    const vx = document.createElement("button");
+    vx.textContent = "✕"; vx.dataset.v = "veto"; vx.className = "vetoBtn"; vx.title = "hard veto";
+    vx.onclick = () => rate(b.baseId, 0);
+    sc.appendChild(vx);
+    for (const mb of miniBtns(row, b.baseId)) sc.appendChild(mb);
+    row.appendChild(sc);
+    noteWrap(row, b.baseId);
+    /* modifier block */
+    const mb = document.createElement("div");
+    mb.className = "mods" + (ratings[b.baseId] === undefined ? " hidden" : "");
+    const mh = document.createElement("div");
+    mh.className = "mhead"; mh.textContent = "VARIATIONS — LOVE / LIKE / MEH / NO WAY";
+    mb.appendChild(mh);
+    b.modifiers.forEach((m, i) => {
+      const mid = b.baseId + "a" + i;
+      const mr = document.createElement("div");
+      mr.className = "amod"; mr.dataset.row = mid;
+      const mt = document.createElement("span");
+      mt.className = "mtag"; mt.textContent = "variation · " + m.theme;
+      mr.appendChild(mt);
+      const md = document.createElement("div");
+      md.className = "mdesc"; md.textContent = m.text;
+      mr.appendChild(md);
+      const vs = document.createElement("div");
+      vs.className = "vscale"; vs.dataset.verdict = mid;
+      VKEYS.forEach((k, vi) => {
+        const btn = document.createElement("button");
+        btn.textContent = VLABELS[vi]; btn.dataset.v = VALS[k];
+        btn.onclick = () => rate(mid, VALS[k]);
+        vs.appendChild(btn);
+      });
+      for (const mnb of miniBtns(mr, mid)) { mnb.classList.add("mini"); vs.appendChild(mnb); }
+      mr.appendChild(vs);
+      noteWrap(mr, mid);
+      mb.appendChild(mr);
+      paint(mid);
+    });
+    row.appendChild(mb);
+    gdiv.appendChild(row);
+    box.appendChild(gdiv);
+    paint(b.baseId);
+  }
+  updateProg();
+}
+
+/* ---- readout ---- */
+function mean(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; }
+function renderDone() {
+  $("rateView").classList.add("hidden");
+  $("doneView").classList.remove("hidden");
+  const byId = Object.fromEntries(items.map(it => [it.id, it]));
+  const bases = items.filter(it => it.kind === "base" && !excluded[it.id] && ratings[it.id] !== undefined);
+  const vetos = bases.filter(it => ratings[it.id] === 0);
+  const bvals = bases.filter(it => ratings[it.id] > 0).map(it => ratings[it.id]);
+  const bm = mean(bvals);
+  const xCount = items.filter(it => excluded[it.id]).length;
+  const mods = items.filter(it => it.kind === "amod" && !excluded[it.id] && ratings[it.id] !== undefined);
+  const wd = mods.filter(it => ratings[it.id] === -1);
+  const graded = mods.filter(it => ratings[it.id] >= 0);
+  const gm = mean(graded.map(it => ratings[it.id]));
+
+  $("verdictBox").innerHTML =
+    `<h3>readout</h3>` +
+    `<p><b>${bases.length}</b> situations rated · mean <b class="${bm >= 7 ? "ok" : bm >= 4 ? "soft" : "bad"}">${bm === null ? "—" : bm.toFixed(1)}</b>` +
+    (vetos.length ? ` · <b class="bad">${vetos.length}</b> hard veto${vetos.length === 1 ? "" : "s"}` : "") + `.</p>` +
+    `<p><b>${mods.length}</b> variations answered · graded mean <b class="${gm >= 1 ? "ok" : gm >= 0.4 ? "soft" : "mid"}">${gm === null ? "—" : gm.toFixed(2)}</b> <span class="conf">(LOVE=2, LIKE=1, MEH=0 — NO WAYs excluded from the mean, bucketed below)</span></p>` +
+    (xCount ? `<p class="conf">${xCount} lines vetoed out of scoring.</p>` : "");
+
+  const tc = { love: 0, like: 0, meh: 0, noway: 0 };
+  for (const m of mods) tc[VKEYS.find(k => VALS[k] === ratings[m.id])]++;
+  let th = `<table><tr><th>verdict</th><th>n</th><th>share</th><th></th></tr>`;
+  const tmeta = { love: ["LOVE", "ok"], like: ["LIKE", ""], meh: ["MEH", "mid"], noway: ["NO WAY", "bad"] };
+  for (const k of VKEYS) {
+    const n = tc[k], sh = mods.length ? Math.round(n / mods.length * 100) : 0;
+    th += `<tr><td><b class="${tmeta[k][1]}">${tmeta[k][0]}</b></td><td class="conf">${n}</td>` +
+      `<td><span class="bar ${k === "noway" ? "neg" : ""}" style="width:${Math.min(160, sh * 1.6)}px"></span> ${sh}%</td>` +
+      `<td class="conf">${k === "noway" ? "the wouldn't-do bucket" : k === "meh" ? "no score" : k === "love" ? "+2" : "+1"}</td></tr>`;
+  }
+  $("tallyBox").innerHTML = th + "</table>";
+
+  const themes = [...new Set(mods.map(m => m.theme))].sort();
+  let kh = `<table><tr><th>theme</th><th>n</th><th>mean graded</th><th>wouldn't-do</th></tr>`;
+  const trows = themes.map(t => {
+    const ms = mods.filter(m => m.theme === t);
+    const g = ms.filter(m => ratings[m.id] >= 0);
+    return { t, n: ms.length, m: mean(g.map(m => ratings[m.id])), wd: ms.filter(m => ratings[m.id] === -1).length };
+  }).sort((a, b) => (b.m || 0) - (a.m || 0));
+  for (const r of trows) {
+    kh += `<tr><td><b>${r.t}</b></td><td class="conf">${r.n}</td>` +
+      `<td><span class="bar ${r.m < 0.5 ? "neg" : ""}" style="width:${Math.round((r.m || 0) * 60)}px"></span> ${(r.m || 0).toFixed(2)}</td>` +
+      `<td class="conf">${r.wd ? `<b class="bad">${r.wd}</b>` : "—"}</td></tr>`;
+  }
+  $("themeBox").innerHTML = kh + "</table>" +
+    `<p class="conf">mean graded over LOVE/LIKE/MEH only (2/1/0). NO WAYs live in the bucket below.</p>`;
+
+  if (wd.length) {
+    const byBase = {};
+    for (const m of wd) { (byBase[m.baseId] = byBase[m.baseId] || []).push(m); }
+    let wh = "";
+    for (const bid of Object.keys(byBase)) {
+      wh += `<div class="wdb"><span class="wb">${byId[bid].desc}</span>` +
+        byBase[bid].map(m => `✕ ${m.desc}`).join("<br>") + `</div>`;
+    }
+    $("wdBox").innerHTML = `<p><b class="bad">${wd.length}</b> variations you'd never do:</p>` + wh;
+  } else {
+    $("wdBox").innerHTML = `<p class="conf">nothing landed in the wouldn't-do bucket.</p>`;
+  }
+
+  const loved = graded.filter(m => ratings[m.id] === 2)
+    .sort((a, b) => (ratings[byId[b.baseId].id] || 0) - (ratings[byId[a.baseId].id] || 0));
+  $("loveBox").innerHTML = loved.length
+    ? `<table><tr><th>situation</th><th>loved variation</th></tr>` +
+      loved.slice(0, 25).map(m => `<tr><td class="conf">${byId[m.baseId].desc}</td><td><b class="ok">LOVE</b> — ${m.desc}</td></tr>`).join("") +
+      `</table>` + (loved.length > 25 ? `<p class="conf">…and ${loved.length - 25} more.</p>` : "")
+    : `<p class="conf">no LOVEs yet.</p>`;
+  window.scrollTo(0, 0);
+}
+function download() {
+  const blob = new Blob([JSON.stringify({
+    ts: new Date().toISOString(), version: "alt-1",
+    scale: { love: 2, like: 1, meh: 0, noway: -1 },
+    items: items.map(it => ({ id: it.id, base: it.kind === "base" ? it.desc : it.gdesc,
+      kind: it.kind, desc: it.desc, theme: it.theme || null,
+      rating: ratings[it.id] === undefined ? null : ratings[it.id],
+      excluded: !!excluded[it.id], note: notes[it.id] || null }))
+  }, null, 1)], { type: "application/json" });
+  const u = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = u; a.download = "scenario-ratings-alt.json"; a.click(); URL.revokeObjectURL(u);
+}
+$("finishBtn").onclick = renderDone;
+$("dlBtn").onclick = download;
+$("backBtn").onclick = () => { $("doneView").classList.add("hidden"); $("rateView").classList.remove("hidden"); };
+function restart() {
+  ratings = {}; excluded = {}; notes = {}; save(); saveX(); saveNotes();
+  buildItems(); render();
+  $("doneView").classList.add("hidden"); $("rateView").classList.remove("hidden");
+  window.scrollTo(0, 0);
+}
+$("restartBtn").onclick = restart;
+$("restartBtn2").onclick = restart;
+buildItems();
+render();
+</script>
+</body>
+</html>
