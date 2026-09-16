@@ -433,7 +433,19 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
   /* ---------------- main flow ---------------- */
 
   async function handleFile(file) {
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file) return;
+    // A report JSON picked through the photo dropzone (easy to do on a phone)
+    // routes to the importer instead of failing silently.
+    const looksJson = /\.json$/i.test(file.name || '') || (file.type || '').includes('json');
+    if (looksJson) {
+      try { importJsonText(await file.text()); }
+      catch (e) { $('importState').innerHTML = '<span class="err">could not read file: ' + esc(e.message || e) + '</span>'; }
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      $('runstate').textContent = 'not an image — pick a photo, or use import JSON below for report files.';
+      return;
+    }
     $('runstate').textContent = 'reading photo…';
     $('report').innerHTML = '';
     $('exportcard').classList.add('hidden');
@@ -536,6 +548,88 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
     $('run').disabled = false;
   }
 
+  /* ---------------- JSON import ---------------- */
+
+  // Re-renders a previously exported workbench report (obj.tool === 'workbench').
+  // Each instrument card renders from the saved data; error stubs render as notes.
+  function renderImportedReport(obj) {
+    faceA = Number.isInteger(obj.subject_a) ? obj.subject_a : 0;
+    const ins = obj.instruments;
+    const errCard = (title, msg) =>
+      card(title, '<p class="note err">' + esc(msg) + '</p>');
+    let html = card('imported report',
+      '<p class="note">workbench report · generated ' + esc(obj.generated_at || 'unknown') +
+      ' · ' + (obj.faces_detected || 0) + ' face(s) detected.</p>');
+    if (ins.age) {
+      html += ins.age.error ? errCard('age estimation', ins.age.error)
+        : renderAge(ins.age, obj.face_a_attributes
+            ? { age: obj.face_a_attributes.genderage_age, sex: obj.face_a_attributes.sex }
+            : null);
+    }
+    if (ins.telemetry) {
+      html += ins.telemetry.error ? errCard('facial telemetry', ins.telemetry.error)
+        : (ins.telemetry.metrics ? renderTelemetry(ins.telemetry)
+          : errCard('facial telemetry', 'no metrics in imported JSON'));
+    }
+    if (ins.kinship) {
+      html += ins.kinship.error ? errCard('kinship', ins.kinship.error)
+        : renderKinship(ins.kinship);
+    }
+    if (ins.breast_telemetry) {
+      html += ins.breast_telemetry.error ? errCard('breast telemetry', ins.breast_telemetry.error)
+        : renderBreast(ins.breast_telemetry);
+    }
+    $('report').innerHTML = html;
+  }
+
+  // Accepts either a breast_telemetry/v1 object or a full workbench report.
+  function importReport(obj) {
+    const st = $('importState');
+    const fail = msg => { st.innerHTML = '<span class="err">' + esc(msg) + '</span>'; };
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { fail('not a JSON object'); return; }
+    if (obj.schema === BUST_SCHEMA) {
+      const v = validateBreastTelemetry(obj);
+      if (!v.ok) { fail('breast_telemetry schema check failed: ' + v.errors.join('; ')); return; }
+      lastReport = {
+        generated_at: new Date().toISOString(),
+        tool: 'workbench',
+        faces_detected: faces.length,
+        subject_a: faceA,
+        instruments: { breast_telemetry: obj },
+        imported_from: BUST_SCHEMA,
+      };
+      hasRun = true;
+      $('report').innerHTML = renderBreast(obj);
+      $('exportcard').classList.remove('hidden');
+      st.textContent = 'imported ' + BUST_SCHEMA + ' — rendered below.';
+      return;
+    }
+    if (obj.tool === 'workbench' && obj.instruments && typeof obj.instruments === 'object') {
+      const keys = Object.keys(obj.instruments);
+      if (!keys.length) { fail('workbench report has no instruments'); return; }
+      lastReport = obj;
+      hasRun = true;
+      renderImportedReport(obj);
+      $('exportcard').classList.remove('hidden');
+      st.textContent = 'imported workbench report (' + keys.join(', ') + ') — rendered below.';
+      return;
+    }
+    fail('unrecognized JSON — need a workbench report ("tool":"workbench") or ' +
+      'breast_telemetry/v1 ("schema":"breast_telemetry/v1").');
+  }
+
+  function importJsonText(text) {
+    const st = $('importState');
+    let obj;
+    try {
+      obj = JSON.parse(text);
+    } catch (e) {
+      st.innerHTML = '<span class="err">not valid JSON: ' + esc(e.message) + '</span>';
+      return;
+    }
+    importReport(obj);
+  }
+
   /* ---------------- export ---------------- */
 
   function download(name, text) {
@@ -569,33 +663,16 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
     renderChips(); drawPreview();
     if (hasRun) run();
   };
-  $('bustImport').onclick = () => {
-    const st = $('bustImportState');
-    let obj;
-    try {
-      obj = JSON.parse($('bustPaste').value);
-    } catch (e) {
-      st.innerHTML = '<span class="err">not valid JSON: ' + esc(e.message) + '</span>';
-      return;
-    }
-    const v = validateBreastTelemetry(obj);
-    if (!v.ok) {
-      st.innerHTML = '<span class="err">schema check failed: ' + esc(v.errors.join('; ')) + '</span>';
-      return;
-    }
-    const rep = {
-      generated_at: new Date().toISOString(),
-      tool: 'workbench',
-      faces_detected: faces.length,
-      subject_a: faceA,
-      instruments: { breast_telemetry: obj },
-    };
-    lastReport = rep;
-    hasRun = true;
-    $('report').innerHTML = renderBreast(obj);
-    $('exportcard').classList.remove('hidden');
-    st.textContent = 'imported ' + BUST_SCHEMA + ' — rendered below.';
+  $('jsonPick').onclick = () => $('jsonFile').click();
+  $('jsonFile').onchange = () => {
+    const f = $('jsonFile').files[0];
+    $('jsonFile').value = ''; // allow re-picking the same file
+    if (!f) return;
+    f.text().then(importJsonText).catch(e => {
+      $('importState').innerHTML = '<span class="err">could not read file: ' + esc(e.message || e) + '</span>';
+    });
   };
+  $('jsonImportBtn').onclick = () => importJsonText($('jsonPaste').value);
   $('copyjson').onclick = async () => {
     try {
       await navigator.clipboard.writeText(JSON.stringify(lastReport, null, 2));

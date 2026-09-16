@@ -15,7 +15,9 @@ re-cropping per tool:
 
 Pick subject A with the face chips; if the photo has 2+ faces, choose a kinship
 target B from the dropdown. Toggle instruments on/off, hit run, get one unified
-report — exportable as JSON.
+report — exportable as JSON, and re-importable later (the import card accepts a
+workbench report JSON or a breast_telemetry/v1 JSON, from file or pasted text —
+no photo needed).
 
 ## How it reuses the other tools
 

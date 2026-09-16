@@ -96,6 +96,23 @@
     <input type="file" id="file" accept="image/*" class="vh">
   </div>
 
+  <div class="card" id="importcard">
+    <h2>import</h2>
+    <div class="note" style="margin-bottom:10px">Already have a report? Load a
+    <b>workbench report JSON</b> or a <b>breast_telemetry/v1</b> JSON — renders straight
+    into the report below, no photo needed.</div>
+    <div>
+      <button class="ghost" id="jsonPick">import JSON file</button>
+      <input type="file" id="jsonFile" accept=".json,application/json" class="vh">
+      <span class="status" id="importState"></span>
+    </div>
+    <details style="margin-top:10px">
+      <summary class="note" style="cursor:pointer">or paste JSON text</summary>
+      <textarea id="jsonPaste" rows="6" style="width:100%;margin-top:6px;font-family:monospace;font-size:12px" placeholder='{"tool":"workbench", …}'></textarea>
+      <div style="margin-top:6px"><button class="ghost" id="jsonImportBtn">import &amp; render</button></div>
+    </details>
+  </div>
+
   <div class="card hidden" id="facecard">
     <h2>faces detected</h2>
     <div class="row">
@@ -123,12 +140,6 @@
       <button class="go" id="run">run workbench</button>
       <span class="status" id="runstate"></span>
     </div>
-    <details style="margin-top:10px">
-      <summary class="note" style="cursor:pointer">paste breast_telemetry/v1 JSON instead</summary>
-      <textarea id="bustPaste" rows="6" style="width:100%;margin-top:6px;font-family:monospace;font-size:12px" placeholder='{"schema":"breast_telemetry/v1", …}'></textarea>
-      <div style="margin-top:6px"><button class="ghost" id="bustImport">import &amp; render</button>
-      <span class="status" id="bustImportState"></span></div>
-    </details>
   </div>
 
   <div id="report"></div>
