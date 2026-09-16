@@ -175,7 +175,7 @@ export function createRoll(canvas, opts = {}) {
   // follow playhead while playing
   function follow(t) {
     const x = xOf(t);
-    if (x > W - 60) { S.scrollX += x - (W - 60); draw(); }
+    if (x > S.W - 60) { S.scrollX += x - (S.W - 60); draw(); }
     else if (x < S.keyW) { S.scrollX = Math.max(0, S.keyW + t * S.pxPerSec - S.keyW - 40); draw(); }
   }
 
