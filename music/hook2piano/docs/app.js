@@ -66,9 +66,12 @@ async function fetchViewHtml(url) {
     }
   } catch (e) { /* CORS — fall through to proxies */ }
   const enc = encodeURIComponent(url);
+  // NOTE 2026-09-16: hooktheory.com sends no ACAO header, so the direct
+  // fetch above always fails in-browser. allorigins.win is down and
+  // corsproxy.io now 401s without a key — api.cors.lol is the verified
+  // working relay (returns the full TheoryTab page).
   const proxies = [
-    "https://api.allorigins.win/raw?url=" + enc,
-    "https://corsproxy.io/?url=" + enc,
+    "https://api.cors.lol/?url=" + enc,
   ];
   for (const p of proxies) {
     try {

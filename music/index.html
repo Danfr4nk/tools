@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tools</title>
+<title>music — tools</title>
 <style>
   body { background:#101216; color:#e8eaf0; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:40px 20px; }
   .wrap { max-width:640px; margin:0 auto; }
@@ -13,52 +13,30 @@
   .tool { border:1px solid #2a2e37; border-radius:12px; padding:16px 18px; margin:14px 0; background:#181b21; }
   .tool h2 { margin:0 0 6px; font-size:18px; }
   .tool p { margin:0; color:#9aa0ad; font-size:14px; }
-  h2.cat { font-size:13px; text-transform:uppercase; letter-spacing:2px; color:#61afef; margin:34px 0 4px; }
+  .back { font-size:13px; margin-bottom:18px; display:block; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>tools</h1>
-  <p class="dim">Temporary index — the real splash page is coming.</p>
+  <a class="back" href="../">← all tools</a>
+  <h1>music</h1>
+  <p class="dim">Taste diagnostics, training instruments, and music tools.</p>
   <div class="tool">
-    <h2><a href="workbench/">workbench</a></h2>
-    <p>One photo in, every instrument out — shared face detection fans out to
-       age estimation, kinship comparison, and facial telemetry in a single
-       pass, with one unified report. Nothing is uploaded.</p>
-  </div>
-  <div class="tool">
-    <h2><a href="body/">body</a></h2>
-    <p>Telemetry mannequin — import a <span style="font-family:monospace">breast_telemetry/v1</span>
-       JSON and the bust rebuilds to scale on a neutral grey mannequin, in 3D and 2D.
-       Nothing is uploaded.</p>
-  </div>
-  <div class="tool">
-    <h2><a href="attraction/">attraction</a></h2>
-    <p>Facial-preference diagnostic, scenario telemetry &amp; ratings, face book,
-       frame-describe lexicon, body metrics, telemetry lab.</p>
-  </div>
-  <div class="tool">
-    <h2><a href="age/">age</a></h2>
-    <p>Visual age estimation — Vision Transformer age-bracket classifier,
-       runs 100% in the browser. Nothing is uploaded.</p>
-  </div>
-  <h2 class="cat"><a href="music/" style="color:#61afef; text-decoration:none;">music</a></h2>
-  <div class="tool">
-    <h2><a href="music/musictrainer/">MusicTrainer</a></h2>
+    <h2><a href="musictrainer/">MusicTrainer</a></h2>
     <p>Weekly scoring instrument for the taste experiment — Discover Weekly +
        Release Radar scorecards. Per track: 1–10 score, skip/like, ADDED?
        yes/no. Prediction paste with timestamped lock, week JSON
        export/import.</p>
   </div>
   <div class="tool">
-    <h2><a href="music/track-autopsy/">AUTOPSY</a></h2>
+    <h2><a href="track-autopsy/">AUTOPSY</a></h2>
     <p>Driver-dissection game — answers <em>what it is about the track</em>
        that did it. Per track: triage + score, WHAT DID IT?
        check-all-that-apply across 16 drivers, KILL ONE load-bearing-element
        pick. Drivers ranked by lift over base keep rate.</p>
   </div>
   <div class="tool">
-    <h2><a href="music/hook2piano/">hook2piano</a></h2>
+    <h2><a href="hook2piano/">hook2piano</a></h2>
     <p>TheoryTab → one-page piano sheet. Paste a TheoryTab URL or tab ID, get
        a printable grand-staff score — left hand plays the chords, right hand
        the melody, with chord symbols and Roman numerals. Runs in the browser

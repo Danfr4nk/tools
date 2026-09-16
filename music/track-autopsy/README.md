@@ -27,4 +27,4 @@ Paste a **MusicTrainer week export** and every track arrives with its status + s
 - The KILL ONE round is an ablation/MaxDiff hybrid — no published music-specific version exists; asking what kills a track is more diagnostic than asking what saves it.
 - Vocals are texture, never words (lyric qualifier).
 - Static site, no backend, no Spotify API. `localStorage` key `autopsy.v1`.
-- Live at https://danfr4nk.github.io/tools/track-autopsy/
+- Live at https://danfr4nk.github.io/tools/music/track-autopsy/

@@ -4,7 +4,7 @@ TheoryTab → one-page piano sheet. Fetches a [Hooktheory](https://www.hooktheor
 
 ## 📱 Web app (phone-friendly)
 
-**https://danfr4nk.github.io/tools/hook2piano/** — paste a TheoryTab URL or tab ID, pick a section, get the score. The full Python engine runs in your browser via Pyodide; the tab JSON comes straight from Hooktheory's public API (CORS-open). Nothing to install.
+**https://danfr4nk.github.io/tools/music/hook2piano/** — paste a TheoryTab URL or tab ID, pick a section, get the score. The full Python engine runs in your browser via Pyodide; the tab JSON comes straight from Hooktheory's public API (CORS-open). Nothing to install.
 
 ## How it works
 
