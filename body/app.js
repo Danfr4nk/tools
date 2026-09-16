@@ -193,7 +193,7 @@ function renderAll(obj, T) {
     h += '<p class="warn">' + T.notes.map(esc).join('<br>') + '</p>';
   h += '<p class="note">source: ' + esc(obj.source) + ' · left side mirrored from right</p>';
   h += '<p class="note"><span class="dot" style="background:#7ee2a8"></span> measured — nipple offset/height, areola Ø, mound width' +
-    '<br><span class="dot" style="background:#ffd479"></span> modeled — apex projection, bust position, left mirror</p>';
+    '<br><span class="dot" style="background:#ffd479"></span> modeled — apex projection, upper-pole fullness, bust position, left mirror</p>';
   h += '<p class="note" id="meshLine">mesh: loading…</p>';
   $('readout').innerHTML = h;
   fit();

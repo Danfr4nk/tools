@@ -20,6 +20,10 @@ export const PARAMS = {
   body: 0xc9ced6,
   foldY: 1150,            // 2D schematic reference only
   projectionFactor: 0.45, // MODELED: apex projection = factor × mound half-width
+  upperPole: 1.20,        // MODELED: upper-pole fullness = factor × mound half-width
+                          // (vertical falloff radius above the apex; Dan's reference
+                          // photos show a gradual, full upper slope from the chest,
+                          // not a ski-slope drop)
 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -50,7 +54,7 @@ export function deriveParams(obj) {
  * Exported so the neutral mesh's own bust can be subtracted with the same shape. */
 export function moundFalloff(dx, dy, T) {
   const R = T.moundW / 2;
-  const rv = dy > 0 ? R * 0.95 : R * 1.30; // teardrop: fuller below nipple
+  const rv = dy > 0 ? R * PARAMS.upperPole : R * 1.30; // full upper pole, gentle teardrop below
   const d2 = Math.pow(dx / R, 2) + Math.pow(dy / rv, 2);
   if (d2 >= 1) return 0;
   return Math.pow(Math.cos(Math.sqrt(d2) * Math.PI / 2), 1.15);

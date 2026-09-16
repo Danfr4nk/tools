@@ -30,6 +30,13 @@ test('teardrop: fuller below the nipple than above', () => {
   assert.ok(bustOffset(0, -R * 0.8, T) > bustOffset(0, R * 0.8, T));
 });
 
+test('upper pole is full: no ski-slope drop above the apex', () => {
+  const R = T.moundW / 2;
+  const ratio = bustOffset(0, R * 0.8, T) / bustOffset(0, -R * 0.8, T);
+  assert.ok(ratio > 0.8, 'upper/lower offset ratio = ' + ratio.toFixed(3));
+  assert.ok(moundFalloff(0, R * 1.1, T) > 0, 'mound still has volume above the apex');
+});
+
 test('inframammary crease dips below the fold line', () => {
   const R = T.moundW / 2;
   const atFold = bustOffset(0, -T.nipUp, T);
