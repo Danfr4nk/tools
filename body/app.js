@@ -48,9 +48,14 @@ const SAMPLE = {
   },
 };
 
-/* ---------------- three.js scene ---------------- */
+/* ---------------- three.js scene (optional) ---------------- */
+/* WebGL is a progressive enhancement here: if the renderer can't start
+ * (no GPU, blocked context), the import flow, 2D schematic and readout
+ * still work. Nothing below this block may assume GL exists. */
 const container = $('view3d');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+let renderer = null, scene = null, camera = null, controls = null, glOK = false;
+try {
+renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -58,14 +63,14 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 container.appendChild(renderer.domElement);
 
-const scene = new THREE.Scene();
+scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b0e14);
 scene.fog = new THREE.Fog(0x0b0e14, 7000, 16000);
 
-const camera = new THREE.PerspectiveCamera(38, 1, 10, 40000);
+camera = new THREE.PerspectiveCamera(38, 1, 10, 40000);
 camera.position.set(340, 1200, 3000);
 
-const controls = new OrbitControls(camera, renderer.domElement);
+controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1000, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
@@ -102,6 +107,7 @@ ground.receiveShadow = true;
 scene.add(ground);
 
 function fit() {
+  if (!glOK) return;
   const w = container.clientWidth, h = container.clientHeight;
   if (!w || !h) return;
   renderer.setSize(w, h);
@@ -110,6 +116,11 @@ function fit() {
 }
 new ResizeObserver(fit).observe(container);
 window.addEventListener('orientationchange', () => setTimeout(fit, 200));
+glOK = true;
+} catch (e) {
+  const noGL = $('hint3d');
+  if (noGL) noGL.textContent = '3D unavailable on this device — import, schematic and readout still work';
+}
 
 /* ---------------- base mesh + bust sculpt ---------------- */
 // Neutral body, loaded once. Every sculpt starts from these neutral positions
@@ -132,6 +143,11 @@ async function getBase() {
 let current = null;
 async function setMannequin(T) {
   const hint = $('hint3d');
+  if (!glOK) {
+    const ml = $('meshLine');
+    if (ml) ml.textContent = 'mesh: 3D unavailable on this device';
+    return;
+  }
   try {
     const base = await getBase();
     const { pos, colors } = sculptBust(base.pos, base.nrm, T, base.apexes);
@@ -161,7 +177,7 @@ async function setMannequin(T) {
   }
 }
 
-renderer.setAnimationLoop(() => {
+if (glOK) renderer.setAnimationLoop(() => {
   controls.update();
   renderer.render(scene, camera);
 });
