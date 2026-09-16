@@ -67,9 +67,12 @@ async function fetchViewHtml(url) {
   } catch (e) { /* CORS — fall through to proxies */ }
   const enc = encodeURIComponent(url);
   // NOTE 2026-09-16: hooktheory.com sends no ACAO header, so the direct
-  // fetch above always fails in-browser. allorigins.win is down and
-  // corsproxy.io now 401s without a key — api.cors.lol is the verified
-  // working relay (returns the full TheoryTab page).
+  // fetch above always fails in-browser. Public relays are unreliable:
+  // allorigins.win down, corsproxy.io 401s without a key, codetabs 522s,
+  // corsfix 400s, cloudflare's demo worker + api.cors.lol rate-limit hard.
+  // api.cors.lol is the only one ever observed working — keep it as the
+  // single best-effort attempt, then point at the bookmarklet (same-origin
+  // DOM access needs no relay at all).
   const proxies = [
     "https://api.cors.lol/?url=" + enc,
   ];
@@ -82,7 +85,8 @@ async function fetchViewHtml(url) {
       }
     } catch (e) { /* try next */ }
   }
-  throw new Error("couldn't load that TheoryTab page (try a bare tab ID)");
+  throw new Error("relay couldn't reach hooktheory — open the TheoryTab page " +
+    "and tap the hook2piano bookmarklet instead (no relay needed)");
 }
 
 /* ---------- project JSON (direct; api.hooktheory.com sends CORS *) ---------- */
@@ -190,3 +194,36 @@ async function onLoad() {
 $("load").onclick = onLoad;
 $("url").addEventListener("keydown", e => { if (e.key === "Enter") onLoad(); });
 $("print").onclick = () => window.print();
+
+/* ---------- ?tabs= deep link (bookmarklet target) ----------
+ * Format: ?tabs=<enc(name)>:<id>,<enc(name)>:<id>  (or bare ids: ?tabs=id1,id2)
+ * Skips the page fetch entirely — the project API is CORS-open, so this
+ * path needs no relay. The bookmarklet (see index.html) extracts ids +
+ * names from the live TheoryTab DOM, where CORS doesn't apply. */
+function safeDecode(s) {
+  try { return decodeURIComponent(s.replace(/\+/g, " ")); }
+  catch (e) { return s; }
+}
+
+function readTabsParam() {
+  // parse the RAW query string: URLSearchParams would decode %2C before we
+  // split, breaking names that contain commas — split first, decode after.
+  const m = location.search.match(/[?&]tabs=([^&#]*)/);
+  if (!m) return null;
+  return m[1].split(",").map(p => {
+    const c = p.lastIndexOf(":");  // separator colon is raw; name's own are %3A
+    const name = c < 0 ? "Tab" : safeDecode(p.slice(0, c)).trim();
+    const tid = (c < 0 ? p : p.slice(c + 1)).trim();
+    return { name: name || "Tab", tid };
+  }).filter(s => s.tid);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  const t = readTabsParam();
+  if (t && t.length) {
+    sections = t;
+    renderChips();
+    setStatus("rendering…");
+    selectSection(0);
+  }
+});

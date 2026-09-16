@@ -55,8 +55,11 @@
   </div>
   <div class="hint">
     Paste a full <b>theorytab/view/&hellip;</b> link to pick from its sections, or a bare
-    tab ID (e.g. <b>nZgWr__wmry</b>). First load downloads the Python engine (~10&nbsp;MB),
-    then everything runs on your phone.
+    tab ID (e.g. <b>nZgWr__wmry</b>). Pasting a link goes through a public relay that
+    rate-limits, so it can fail &mdash; the reliable path is the bookmarklet:
+    open any TheoryTab page and tap <a href="javascript:(function(){var h=document.documentElement.innerHTML,out=[],seen={},re=/&lt;div id=&quot;tab-([^&quot;]+)&quot;&gt;/g,m;while((m=re.exec(h))){var tid=m[1];if(seen[tid])continue;seen[tid]=1;var b=h.slice(Math.max(0,m.index-3000),m.index),ts=[],tm;var tr=/&gt;([^&lt;&gt;]{1,60})&lt;/g;while((tm=tr.exec(b))){var t=tm[1].trim();if(t&amp;&amp;t.indexOf(&#x27;Open In Hookpad&#x27;)&lt;0)ts.push(t)}var name=ts.length?ts[ts.length-1]:&#x27;Tab&#x27;;if(name.indexOf(&#x27;–&#x27;)&gt;=0)name=name.split(&#x27;–&#x27;).pop().trim();else if(name.indexOf(&#x27; - &#x27;)&gt;=0)name=name.split(&#x27; - &#x27;).pop().trim();out.push(encodeURIComponent(name)+&#x27;:&#x27;+tid)}if(!out.length){alert(&#x27;hook2piano: no tabs found on this page&#x27;);return}open(&#x27;https://danfr4nk.github.io/tools/music/hook2piano/docs/?tabs=&#x27;+out.join(&#x27;,&#x27;),&#x27;_blank&#x27;)})()">⚡ hook2piano</a> (drag it to your
+    bookmarks bar on desktop). It reads the tab list straight from the page, no relay needed.
+    First load downloads the Python engine (~10&nbsp;MB), then everything runs on your phone.
   </div>
 </div>
 <div id="score"></div>
