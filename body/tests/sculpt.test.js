@@ -11,7 +11,7 @@ import {
 } from '../mannequin.js';
 
 const dir = dirname(fileURLToPath(import.meta.url));
-const T = { moundW: 148, areolaD: 48, nipUp: 108.7, nipLat: 93.6 };
+const T = { moundW: 148, areolaD: 48, nipUp: 108.7, nipLat: 93.6, apexH: 148 / 2 * PARAMS.projectionFactor };
 
 /* --- bustOffset profile --- */
 test('apex offset = H + areola + nipple terms', () => {
@@ -70,6 +70,32 @@ test('deriveParams converts px deltas with mm/px and clamps', () => {
   assert.ok(Math.abs(P.nipLat - 620 * 0.151) < 1e-9);
   assert.ok(Math.abs(P.nipUp - 720 * 0.151) < 1e-9);
   assert.equal(P.moundW, 148);
+});
+
+test('deriveParams: measured apex projection overrides the 0.45 factor', () => {
+  const mk = (apx) => deriveParams({
+    measured_px: {
+      right_nipple: { x: 380, y: 1180 },
+      cleavage_x_at_nipple_height_px: 1000,
+      right_fold_y_px: 1900,
+    },
+    scale_model: { mm_per_px: 0.151 },
+    modeled_physical: Object.assign(
+      { right_mound_width_mm: 148, right_areola_diameter_mm: 48 },
+      apx === undefined ? {} : { apex_projection_mm: apx }),
+    cup_estimate: { verdict: 'withheld' },
+    source: 'test',
+  });
+  const P0 = mk(undefined);
+  assert.equal(P0.apexMeasured, false);
+  assert.ok(Math.abs(P0.apexH - 148 / 2 * PARAMS.projectionFactor) < 1e-9);
+  const P1 = mk(42);
+  assert.equal(P1.apexMeasured, true);
+  assert.equal(P1.apexH, 42);
+  // the override reaches the sculpted profile at the apex
+  const R = P1.moundW / 2;
+  assert.ok(Math.abs(bustOffset(0, 0, P1) - (42 + 1.6 + 5.0)) < 1e-9);
+  assert.ok(bustOffset(0, 0, P1) > bustOffset(0, 0, P0), 'measured-fuller bust projects further');
 });
 
 /* --- real mesh --- */

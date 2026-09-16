@@ -12,8 +12,12 @@
  * schematic and the readout.
  *
  * Measured (from breast_telemetry/v1): nipple lateral offset + height above
- * fold (px deltas × mm/px), areola diameter, mound width (absolute mm).
- * Modeled (labeled as such): apex projection, bust position, left mirror.
+ * fold (px deltas × mm/px), areola diameter, mound width (absolute mm),
+ * apex projection (modeled_physical.apex_projection_mm, optional — measured
+ * from a profile photo, chained via nipple_to_fold_mm so no new anchor needed).
+ * Modeled (labeled as such): apex projection as 0.45 × mound half-width, but
+ * ONLY when no measured projection is present; upper-pole fullness, bust
+ * position, left mirror always.
  */
 
 export const PARAMS = {
@@ -38,10 +42,20 @@ export function deriveParams(obj) {
     if (cl !== v) notes.push(name + ' clamped ' + v.toFixed(1) + ' → ' + cl.toFixed(1) + ' mm');
     return cl;
   };
+  const moundW = c(ph.right_mound_width_mm, 80, 260, 'mound width');
+  // Apex projection: measured wins when the JSON carries it (v3.3 — Dan's
+  // Annie-vs-Alexis test showed width-slaved projection erases real shape
+  // differences: same teardrop at two scales, sub-visible at body scale).
+  const apx = ph.apex_projection_mm;
+  const apexMeasured = typeof apx === 'number' && isFinite(apx);
+  const apexH = apexMeasured ? c(apx, 10, 90, 'apex projection')
+                            : moundW / 2 * PARAMS.projectionFactor;
   return {
     nipLat: c(Math.abs(mp.right_nipple.x - mp.cleavage_x_at_nipple_height_px) * mmpx, 40, 150, 'nipple lateral offset'),
     nipUp: c((mp.right_fold_y_px - mp.right_nipple.y) * mmpx, 35, 175, 'nipple height above fold'),
-    moundW: c(ph.right_mound_width_mm, 80, 260, 'mound width'),
+    moundW,
+    apexH,
+    apexMeasured,
     areolaD: c(ph.right_areola_diameter_mm, 18, 95, 'areola diameter'),
     foldY: PARAMS.foldY,
     cup: obj.cup_estimate.verdict,
@@ -63,7 +77,10 @@ export function moundFalloff(dx, dy, T) {
 /* Pure bust displacement profile: offset (mm) at (dx, dy) from the apex.
  * Positive = outward along the surface normal. Exported for unit testing. */
 export function bustOffset(dx, dy, T) {
-  const R = T.moundW / 2, H = R * PARAMS.projectionFactor, aR = T.areolaD / 2;
+  const R = T.moundW / 2, aR = T.areolaD / 2;
+  // Measured projection (T.apexH) wins when deriveParams resolved one;
+  // otherwise fall back to the modeled 0.45 × half-width.
+  const H = (typeof T.apexH === 'number' && isFinite(T.apexH)) ? T.apexH : R * PARAMS.projectionFactor;
   let off = H * moundFalloff(dx, dy, T);
   const da = Math.hypot(dx, dy) / aR;
   if (da < 1) off += 1.6 * Math.pow(Math.cos(da * Math.PI / 2), 2); // areola dome

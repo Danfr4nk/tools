@@ -194,6 +194,8 @@ function renderAll(obj, T) {
     ['areola Ø', ph.right_areola_diameter_mm.toFixed(1) + ' mm', cf.areola_diameter],
     ['mound width', ph.right_mound_width_mm.toFixed(1) + ' mm', cf.mound_width],
     ['nipple → fold', ph.right_nipple_to_fold_mm.toFixed(1) + ' mm', cf.nipple_to_fold],
+    ['apex projection', T.apexH.toFixed(1) + ' mm',
+      T.apexMeasured ? 'measured (profile photo)' : 'modeled (0.45 × half-width)'],
     ['nipple lateral', T.nipLat.toFixed(1) + ' mm from cleavage', '—'],
     ['scale', obj.scale_model.mm_per_px.toFixed(4) + ' mm/px (' + esc(obj.scale_model.method) + ')', obj.scale_model.confidence || '—'],
     ['cup verdict', esc(obj.cup_estimate.verdict), cf.cup],
@@ -209,7 +211,9 @@ function renderAll(obj, T) {
     h += '<p class="warn">' + T.notes.map(esc).join('<br>') + '</p>';
   h += '<p class="note">source: ' + esc(obj.source) + ' · left side mirrored from right</p>';
   h += '<p class="note"><span class="dot" style="background:#7ee2a8"></span> measured — nipple offset/height, areola Ø, mound width' +
-    '<br><span class="dot" style="background:#ffd479"></span> modeled — apex projection, upper-pole fullness, bust position, left mirror</p>';
+    (T.apexMeasured ? ', apex projection' : '') +
+    '<br><span class="dot" style="background:#ffd479"></span> modeled — ' +
+    (T.apexMeasured ? '' : 'apex projection, ') + 'upper-pole fullness, bust position, left mirror</p>';
   h += '<p class="note" id="meshLine">mesh: loading…</p>';
   $('readout').innerHTML = h;
   fit();
