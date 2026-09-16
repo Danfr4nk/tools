@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CO-WATCH — watch with Sammy</title>
+<style>
+  :root { --bg:#0d0d0f; --panel:#161618; --line:#26262a; --txt:#e8e8e8; --dim:#9a9aa0; --acc:#ff4d6d; --hl:#2a2a10; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,sans-serif; }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; letter-spacing:2px; }
+  header h1 span { color:var(--acc); }
+  #urlbar { display:flex; gap:8px; padding:14px 18px; border-bottom:1px solid var(--line); }
+  #urlbar input { flex:1; background:var(--panel); border:1px solid var(--line); color:var(--txt); padding:10px 12px; border-radius:8px; font-size:14px; }
+  #urlbar button { background:var(--acc); color:#fff; border:0; border-radius:8px; padding:10px 18px; font-size:14px; cursor:pointer; }
+  #chips { display:flex; gap:8px; padding:10px 18px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  .chip { background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:6px 14px; font-size:13px; cursor:pointer; color:var(--dim); }
+  .chip.active { color:#fff; border-color:var(--acc); }
+  #stage { display:grid; grid-template-columns:1.4fr 1fr; gap:0; height:calc(100vh - 175px); min-height:400px; }
+  #playerwrap { background:#000; position:relative; }
+  #playerwrap iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  #transcript { overflow-y:auto; border-left:1px solid var(--line); background:var(--panel); }
+  .tline { padding:8px 14px; border-bottom:1px solid #1e1e22; cursor:pointer; display:flex; gap:10px; align-items:baseline; }
+  .tline:hover { background:#1c1c20; }
+  .tline.now { background:var(--hl); }
+  .tline .ts { color:var(--acc); font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; min-width:44px; }
+  .tline .tx { flex:1; font-size:14px; line-height:1.45; }
+  .tline .ping { opacity:0; background:none; border:1px solid var(--line); color:var(--dim); border-radius:6px; font-size:11px; padding:3px 8px; cursor:pointer; white-space:nowrap; }
+  .tline:hover .ping { opacity:1; }
+  .tline .ping:hover { color:#fff; border-color:var(--acc); }
+  #empty { padding:40px; color:var(--dim); text-align:center; }
+  #empty code { color:var(--txt); background:#1c1c20; padding:2px 8px; border-radius:6px; }
+  #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#222; border:1px solid var(--acc); color:#fff; padding:10px 20px; border-radius:10px; display:none; font-size:14px; z-index:99; }
+  @media (max-width:800px){ #stage{ grid-template-columns:1fr; height:auto; } #playerwrap{ aspect-ratio:16/9; } #transcript{ max-height:50vh; border-left:0; border-top:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>CO<span>-</span>WATCH</h1>
+  <div style="color:var(--dim);font-size:13px">watch it together — you see it, Sammy reads it, you talk in real time</div>
+</header>
+<div id="urlbar">
+  <input id="url" placeholder="paste a YouTube link…">
+  <button id="load">load</button>
+</div>
+<div id="chips"></div>
+<div id="stage">
+  <div id="playerwrap"><div id="player"></div></div>
+  <div id="transcript"><div id="empty">no video loaded yet.<br><br>paste a link above — if Sammy hasn't loaded the transcript for it yet, send him the link in chat and he'll add it.</div></div>
+</div>
+<div id="toast"></div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+let DB = {};
+let player = null, videoId = null, lines = [], timer = null;
+
+const $ = id => document.getElementById(id);
+const fmt = s => { s = Math.floor(s); return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); };
+
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.style.display="block"; setTimeout(()=>t.style.display="none",2200); }
+
+function vidFromUrl(u){
+  const m = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+function renderChips(){
+  const c = $("chips"); c.innerHTML = "";
+  Object.keys(DB).forEach(id => {
+    const d = document.createElement("div");
+    d.className = "chip" + (id === videoId ? " active" : "");
+    d.textContent = DB[id].title || id;
+    d.onclick = () => loadVideo(id);
+    c.appendChild(d);
+  });
+}
+
+function loadVideo(id){
+  videoId = id;
+  const meta = DB[id];
+  renderChips();
+  const tr = $("transcript");
+  if (meta && meta.lines && meta.lines.length){
+    lines = meta.lines;
+    tr.innerHTML = "";
+    lines.forEach((l, i) => {
+      const div = document.createElement("div");
+      div.className = "tline"; div.id = "tl-" + i;
+      div.innerHTML = `<span class="ts">${fmt(l.t)}</span><span class="tx"></span>`;
+      div.querySelector(".tx").textContent = l.text;
+      const b = document.createElement("button");
+      b.className = "ping"; b.textContent = "ping Sammy";
+      b.onclick = e => {
+        e.stopPropagation();
+        const msg = `co-watch ${id} @ ${fmt(l.t)} — `;
+        navigator.clipboard.writeText(msg).then(()=>toast("copied — paste it to Sammy in chat"));
+      };
+      div.appendChild(b);
+      div.onclick = () => { if (player) player.seekTo(l.t, true); };
+      tr.appendChild(div);
+    });
+  } else {
+    lines = [];
+    tr.innerHTML = `<div id="empty">no transcript loaded for this video yet.<br><br>send the link to Sammy in chat — he'll pull the transcript and load it here.<br><br><code>${id}</code></div>`;
+  }
+  if (player && player.loadVideoById) player.loadVideoById(id);
+  else createPlayer(id);
+}
+
+function createPlayer(id){
+  if (typeof YT === "undefined" || !YT.Player){ setTimeout(()=>createPlayer(id), 300); return; }
+  if (player && player.destroy) player.destroy();
+  player = new YT.Player("player", {
+    videoId: id,
+    playerVars: { rel: 0 },
+    events: {
+      onStateChange: e => {
+        if (e.data === YT.PlayerState.PLAYING && !timer) timer = setInterval(sync, 500);
+        if (e.data !== YT.PlayerState.PLAYING && timer){ clearInterval(timer); timer = null; }
+      }
+    }
+  });
+}
+function onYouTubeIframeAPIReady(){ if (videoId) createPlayer(videoId); }
+
+function sync(){
+  if (!player || !lines.length) return;
+  const t = player.getCurrentTime();
+  let cur = 0;
+  for (let i = 0; i < lines.length; i++) if (lines[i].t <= t) cur = i;
+  document.querySelectorAll(".tline.now").forEach(el => el.classList.remove("now"));
+  const el = $("tl-" + cur);
+  if (el){ el.classList.add("now"); el.scrollIntoView({ block:"nearest", behavior:"smooth" }); }
+}
+
+$("load").onclick = () => {
+  const id = vidFromUrl($("url").value.trim());
+  if (!id){ toast("that's not a YouTube link"); return; }
+  loadVideo(id);
+};
+$("url").addEventListener("keydown", e => { if (e.key === "Enter") $("load").click(); });
+
+fetch("transcripts.json").then(r => r.json()).then(j => { DB = j; renderChips(); }).catch(()=>{});
+</script>
+</body>
+</html>
