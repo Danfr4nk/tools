@@ -48,6 +48,8 @@ export function renderTelemetry(r, faceIdx) {
   if (r.annotated_png_dataurl)
     h += '<div style="margin-bottom:10px"><img class="preview" src="' + r.annotated_png_dataurl +
       '" alt="face crop with telemetry guidelines"></div>';
+  else if (r.overlay_error)
+    h += '<p class="note err">annotated picture failed: ' + esc(r.overlay_error) + '</p>';
   h += '<table class="metrics">';
   for (const k of TELEMETRY_SHOW)
     h += '<tr><td>' + esc(METRIC_LABELS[k] || k) + ' <span class="note">' + esc(k) + '</span></td>' +

@@ -233,16 +233,18 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     // Annotated overlay: the lab's telestrator on the measured image, cropped
     // to the face like the lab's output. Baked into a PNG data URL so the
     // report card shows it and the export carries the guidelines with it.
-    let annotatedPng = null;
+    // Failures are surfaced on the result (never silent) so a missing picture
+    // always says why.
+    let annotatedPng = null, overlayError = null;
     try {
       const lm = detectLandmarks(ovImg);
+      if (!lm) throw new Error('landmarker returned no landmarks for the overlay (' + (detectError() || 'unknown') + ')');
       const d = computeFaceOverlayData(lm);
-      if (d) {
-        const iw = ovImg.naturalWidth || ovImg.width, ih = ovImg.naturalHeight || ovImg.height;
-        annotatedPng = annotatedPngDataUrl(
-          ovImg, lm, d, 'face ' + (faceIdx + 1) + ' · ' + iw + '×' + ih + 'px ' + src);
-      }
-    } catch (e) { console.warn('overlay render failed:', e); }
+      if (!d) throw new Error('overlay geometry failed (need 478 landmarks)');
+      const iw = ovImg.naturalWidth || ovImg.width, ih = ovImg.naturalHeight || ovImg.height;
+      annotatedPng = annotatedPngDataUrl(
+        ovImg, lm, d, 'face ' + (faceIdx + 1) + ' · ' + iw + '×' + ih + 'px ' + src);
+    } catch (e) { overlayError = (e && e.message) || String(e); console.warn('overlay render failed:', e); }
     const out = {
       metrics: m,
       measured_on: src,
@@ -253,6 +255,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     if (annotatedPng) {
       out.annotated_png_dataurl = annotatedPng;
       window.__wbTelePng = { dataUrl: annotatedPng, faceIdx };
+    } else {
+      out.overlay_error = overlayError;
     }
     return out;
   }
