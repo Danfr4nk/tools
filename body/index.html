@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>body — telemetry mannequin</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0b0e14; color:#e8eaf0; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:20px 14px 60px; }
+  .wrap { max-width:760px; margin:0 auto; }
+  .crumbs { color:#9aa0ad; font-size:13px; margin:0 0 4px; }
+  .crumbs a { color:#61afef; text-decoration:none; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  h1 .sub { color:#9aa0ad; font-weight:400; font-size:16px; }
+  p.dim { color:#9aa0ad; font-size:14px; margin:0 0 14px; }
+  .mono { font-family:ui-monospace,monospace; }
+  .card { border:1px solid #232833; border-radius:14px; padding:16px; margin:14px 0; background:#11141b; }
+  .card h2 { margin:0 0 10px; font-size:15px; color:#9aa0ad; text-transform:uppercase; letter-spacing:.08em; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .filebtn, button { background:#1d2532; color:#e8eaf0; border:1px solid #3a4356; border-radius:10px; padding:12px 18px; font-size:15px; cursor:pointer; }
+  .filebtn:active, button:active { background:#28303f; }
+  textarea { width:100%; box-sizing:border-box; background:#0b0e14; color:#e8eaf0; border:1px solid #2a2e37; border-radius:10px; padding:10px; font-family:ui-monospace,monospace; font-size:13px; margin:10px 0; }
+  .status { margin-top:10px; font-size:14px; min-height:20px; }
+  .ok { color:#7ee2a8; } .err { color:#ff8a8a; } .warn { color:#ffd479; font-size:13px; }
+  .errlist { color:#ff8a8a; font-size:13px; margin:8px 0; padding-left:20px; }
+  .toggle { display:flex; gap:8px; margin:16px 0 0; }
+  .toggle button { flex:1; padding:13px; font-size:15px; opacity:.55; }
+  .toggle button.on { opacity:1; border-color:#7dd3fc; background:#16202e; }
+  #view3d { width:100%; height:min(72vh,620px); min-height:420px; border-radius:10px; overflow:hidden; background:#0b0e14; touch-action:none; }
+  #view3d canvas { display:block; }
+  .hint { color:#9aa0ad; font-size:12.5px; margin:8px 0 0; text-align:center; }
+  .cup { font-size:30px; font-weight:800; margin:0 0 8px; }
+  .rtable { width:100%; border-collapse:collapse; font-size:14px; }
+  .rtable td { padding:7px 4px; border-top:1px solid #232833; vertical-align:top; }
+  .rtable td.dim { color:#9aa0ad; font-size:12.5px; text-align:right; white-space:nowrap; }
+  .note { color:#9aa0ad; font-size:12.5px; margin:10px 0 0; }
+  footer { color:#5b6270; font-size:12px; margin-top:26px; text-align:center; }
+  footer a { color:#61afef; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="crumbs"><a href="../">tools</a> / body</p>
+  <h1>body <span class="sub">telemetry mannequin</span></h1>
+  <p class="dim">Import a <span class="mono">breast_telemetry/v1</span> JSON — the bust rebuilds to scale on a neutral grey mannequin, in 3D and 2D. Nothing is uploaded.</p>
+
+  <section class="card">
+    <h2>import</h2>
+    <div class="row">
+      <label class="filebtn" for="jsonFile">import JSON file</label>
+      <input type="file" id="jsonFile" accept=".json,application/json" hidden>
+      <button id="pasteToggle" type="button">paste JSON</button>
+    </div>
+    <div id="pasteBox" hidden>
+      <textarea id="jsonText" rows="7" placeholder='{"schema":"breast_telemetry/v1", ...}'></textarea>
+      <button id="importText" type="button">import &amp; render</button>
+    </div>
+    <div id="importStatus" class="status"></div>
+    <div id="importErrors"></div>
+  </section>
+
+  <div class="toggle">
+    <button id="tab3d" class="on" type="button">3D mannequin</button>
+    <button id="tab2d" type="button">2D schematic</button>
+  </div>
+
+  <section class="card" id="view3dWrap">
+    <div id="view3d"></div>
+    <p class="hint">drag to orbit · scroll / pinch to zoom · auto-rotates until you grab it</p>
+  </section>
+
+  <section class="card" id="view2dWrap" hidden>
+    <div id="view2d"></div>
+  </section>
+
+  <section class="card">
+    <h2>readout</h2>
+    <div id="readout"></div>
+  </section>
+
+  <footer>bust only for now — full-body telemetry is the roadmap · <a href="../workbench/">workbench</a></footer>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -90,6 +90,7 @@ export function renderBreast(rep, photoImg) {
   h += '<p class="note"><b>assumption:</b> ' + esc(ce.assumption) + ' ' + esc(ce.note) + '</p>';
   h += '<p class="note"><b>scale:</b> ' + esc(sm.assumption) + ' ' + esc(sm.caveat) + '</p>';
   h += '<p class="note"><b>left breast:</b> ' + esc(rep.left_breast.note || JSON.stringify(rep.left_breast)) + '</p>';
+  h += '<p class="note"><a href="../body/" target="_blank" rel="noopener">rebuild this bust on the mannequin →</a></p>';
   h += '<div class="note"><b>confidence</b><ul style="margin:4px 0;padding-left:18px">';
   for (const [k, v] of Object.entries(rep.confidence))
     h += '<li>' + esc(k) + ': ' + esc(v) + '</li>';
