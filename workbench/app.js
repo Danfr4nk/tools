@@ -8,7 +8,7 @@
  * Everything runs on-device. Nothing is uploaded.
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
-import { ensureLandmarker, measureImage, METRIC_LABELS } from '../attraction/js/measure.js';
+import { ensureLandmarker, landmarkerError, measureImage, METRIC_LABELS } from '../attraction/js/measure.js';
 
 (function () {
   'use strict';
@@ -118,14 +118,15 @@ import { ensureLandmarker, measureImage, METRIC_LABELS } from '../attraction/js/
       dtype: 'q4f16',
       progress_callback: ev => {
         if (ev.status === 'progress' && ev.progress != null)
-          onStatus('loading age model… ' + (ev.progress * 100).toFixed(0) + '%');
+          onStatus('loading age model… ' + ev.progress.toFixed(0) + '%');
       },
     });
     ageReady = true;
   }
 
   async function loadTelemetry(onStatus) {
-    await ensureLandmarker(onStatus);
+    const lm = await ensureLandmarker(onStatus);
+    if (!lm) throw new Error('landmark model failed to load (' + (landmarkerError() || 'unknown reason') + ')');
     teleReady = true;
   }
 

@@ -17,6 +17,11 @@ const IDX = {
 let landmarker = null;
 let ready = false;
 let failed = false;
+let failedReason = null;
+
+// Why the last load attempt failed (both GPU and CPU attempts, if any).
+// Null when the landmarker loaded or was never attempted.
+export function landmarkerError() { return failedReason; }
 
 // Extended landmark indices for the diagnostic metric set (same as the
 // offline audit pipeline — telemetry_bank.py — so game measurements match
@@ -29,9 +34,11 @@ const EXTRA = {
 
 export async function ensureLandmarker(onStatus) {
   if (landmarker || failed) return landmarker;
+  const errors = [];
+  let fileset = null;
   try {
     onStatus && onStatus('loading landmark model…');
-    const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+    fileset = await FilesetResolver.forVisionTasks(WASM_URL);
     landmarker = await FaceLandmarker.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
       runningMode: 'IMAGE',
@@ -41,9 +48,11 @@ export async function ensureLandmarker(onStatus) {
     ready = true;
     onStatus && onStatus('landmarks ready');
   } catch (e) {
-    // GPU delegate can fail on some devices; retry CPU
+    errors.push('gpu: ' + ((e && e.message) || e));
+    // GPU delegate can fail on some devices; retry CPU, reusing the fileset
+    // when we already have one.
     try {
-      const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+      if (!fileset) fileset = await FilesetResolver.forVisionTasks(WASM_URL);
       landmarker = await FaceLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
         runningMode: 'IMAGE',
@@ -53,7 +62,9 @@ export async function ensureLandmarker(onStatus) {
       ready = true;
       onStatus && onStatus('landmarks ready');
     } catch (e2) {
+      errors.push('cpu: ' + ((e2 && e2.message) || e2));
       failed = true;
+      failedReason = errors.join(' | ');
       onStatus && onStatus('measurement unavailable');
     }
   }
