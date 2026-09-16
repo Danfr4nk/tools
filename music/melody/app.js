@@ -20,11 +20,14 @@ function setStatus(t) { status.textContent = t; }
 function showErr(t) { errBox.textContent = t; errBox.hidden = false; }
 function clearErr() { errBox.hidden = true; errBox.textContent = ''; }
 
-drop.addEventListener('click', () => fileInput.click());
+// the file input covers the whole drop zone, so taps/clicks land on it natively
 ['dragover', 'dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
-fileInput.addEventListener('change', () => { const f = fileInput.files[0]; if (f) loadFile(f); });
+drop.addEventListener('drop', e => {
+  if (e.target === fileInput) return; // the input's own change event handles this
+  const f = e.dataTransfer.files[0]; if (f) loadFile(f);
+});
+fileInput.addEventListener('change', () => { const f = fileInput.files[0]; if (f) { loadFile(f); fileInput.value = ''; } });
 
 async function loadFile(f) {
   clearErr(); results.hidden = true; stop();

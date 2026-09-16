@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>MELODY — audio → piano roll → MIDI</title>
-<link rel="stylesheet" href="style.css?v=20260916a">
+<link rel="stylesheet" href="style.css?v=20260916b">
 </head>
 <body>
 <div class="wrap">
@@ -18,7 +18,7 @@
       <div class="big">drop a song here</div>
       <div class="dim">or tap to browse — mp3, wav, m4a, ogg, flac</div>
     </div>
-    <input type="file" id="file" accept="audio/*" hidden>
+    <input type="file" id="file" accept="audio/*" class="filepick" aria-label="Choose an audio file to analyze">
   </div>
 
   <div id="prog" class="prog" hidden><div id="progfill"></div></div>
@@ -48,6 +48,6 @@
   <p class="dim foot">v1 — predominant-melody salience tracker. Dense mixes, stacked harmonies
   and buried leads can fool it; if it grabs the wrong line, that's the honest limit of v1, not a bug report to file.</p>
 </div>
-<script type="module" src="app.js?v=20260916a"></script>
+<script type="module" src="app.js?v=20260916b"></script>
 </body>
 </html>
