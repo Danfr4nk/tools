@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>MELODY — audio → piano roll → MIDI</title>
+<link rel="stylesheet" href="style.css?v=20260916a">
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="../">← music tools</a>
+  <h1>MELODY</h1>
+  <p class="dim">Upload a finished song. It finds the lead melody, puts it on a piano roll,
+     plays it back, and exports MIDI for your DAW. Everything runs on your device — nothing is uploaded.</p>
+
+  <div id="drop" class="drop">
+    <div class="drop-inner">
+      <div class="big">drop a song here</div>
+      <div class="dim">or tap to browse — mp3, wav, m4a, ogg, flac</div>
+    </div>
+    <input type="file" id="file" accept="audio/*" hidden>
+  </div>
+
+  <div id="prog" class="prog" hidden><div id="progfill"></div></div>
+  <div id="status" class="status"></div>
+  <div id="err" class="err" hidden></div>
+
+  <section id="results" hidden>
+    <div class="filerow"><span id="fname" class="fname"></span><span id="stats" class="stats dim"></span></div>
+    <div class="transport">
+      <button id="playbtn" class="btn primary">▶ play melody</button>
+      <button id="stopbtn" class="btn">⏹</button>
+      <label class="chk"><input type="checkbox" id="origtoggle"> original underneath</label>
+      <span id="time" class="dim time">0.0s</span>
+      <span class="spacer"></span>
+      <button id="zout" class="btn sm">−</button>
+      <button id="zin" class="btn sm">+</button>
+      <button id="zfit" class="btn sm">fit</button>
+    </div>
+    <canvas id="roll"></canvas>
+    <div class="hint dim">drag to scroll · scroll to zoom · tap a note to hear it · tap empty space to move the start point</div>
+    <div class="exportrow">
+      <button id="midibtn" class="btn primary">⬇ MIDI</button>
+      <button id="jsonbtn" class="btn">⬇ notes JSON</button>
+    </div>
+  </section>
+
+  <p class="dim foot">v1 — predominant-melody salience tracker. Dense mixes, stacked harmonies
+  and buried leads can fool it; if it grabs the wrong line, that's the honest limit of v1, not a bug report to file.</p>
+</div>
+<script type="module" src="app.js?v=20260916a"></script>
+</body>
+</html>
