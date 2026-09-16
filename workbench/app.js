@@ -473,6 +473,7 @@ import { ensureLandmarker, measureImage, METRIC_LABELS } from '../attraction/js/
 
   const drop = $('drop'), fileInput = $('file');
   drop.onclick = () => fileInput.click();
+  drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } };
   fileInput.onchange = () => fileInput.files[0] && handleFile(fileInput.files[0]);
   drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
