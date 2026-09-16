@@ -9,6 +9,7 @@
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, measureImage, METRIC_LABELS } from '../attraction/js/measure.js';
+import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js';
 
 (function () {
   'use strict';
@@ -45,6 +46,7 @@ import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, mea
   let teleReady = false;
 
   let photo = null;          // {rgb, w, h, img}
+  let photoName = 'upload';
   let faces = [];            // SCRFD faces, largest-first
   let faceA = 0, faceB = 1;
   let embedCache = {};       // faceIndex -> embedFace result
@@ -240,6 +242,54 @@ import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, mea
     };
   }
 
+  async function instrumentBreast(fileName) {
+    $('runstate').textContent = 'running breast telemetry…';
+    const rep = measureBreastTelemetry(photo.rgb, photo.w, photo.h, fileName);
+    if (!rep) throw new Error('breast telemetry: could not resolve nipple/areola/nail landmarks in this photo');
+    const v = validateBreastTelemetry(rep);
+    if (!v.ok) throw new Error('breast telemetry schema invalid: ' + v.errors.join('; '));
+    return rep;
+  }
+
+  function renderBreast(rep) {
+    const mp = rep.measured_px, sm = rep.scale_model, ph = rep.modeled_physical, ce = rep.cup_estimate;
+    const row = (k, v) => '<tr><td>' + esc(k) + '</td><td>' + esc(v) + '</td></tr>';
+    let h = '<div class="kpi">' +
+      '<div><div class="v">' + esc(ce.verdict) + '</div><div class="l">cup verdict (modeled)</div></div>' +
+      '<div><div class="v">' + ph.right_areola_diameter_mm + ' mm</div><div class="l">areola diameter</div></div>' +
+      '<div><div class="v">' + ph.right_mound_width_mm + ' mm</div><div class="l">mound width</div></div>' +
+      '<div><div class="v">' + sm.mm_per_px + '</div><div class="l">mm/px (nail anchor)</div></div></div>';
+    h += '<table class="metrics">' +
+      row('nipple (px)', mp.right_nipple.x + ', ' + mp.right_nipple.y) +
+      row('areola diameter', mp.right_areola_diameter_px + ' px') +
+      row('mound width', mp.right_mound_width_px + ' px') +
+      row('nipple → fold', mp.right_nipple_to_fold_px + ' px (fold y=' + mp.right_fold_y_px + ')') +
+      row('cleavage x @ nipple height', mp.cleavage_x_at_nipple_height_px + ' px') +
+      row('nail anchor', mp.nail_anchor_median_width_px + ' px median') +
+      row('band table', Object.entries(ce.band_table).map(([b, c]) => b + ': ' + c).join(' · ')) +
+      '</table>';
+    h += '<p class="note"><b>method:</b> ' + esc(ce.method) + '</p>';
+    h += '<p class="note"><b>assumption:</b> ' + esc(ce.assumption) + ' ' + esc(ce.note) + '</p>';
+    h += '<p class="note"><b>scale:</b> ' + esc(sm.assumption) + ' ' + esc(sm.caveat) + '</p>';
+    h += '<p class="note"><b>left breast:</b> ' + esc(rep.left_breast.note || JSON.stringify(rep.left_breast)) + '</p>';
+    h += '<div class="note"><b>confidence</b><ul style="margin:4px 0;padding-left:18px">';
+    for (const [k, v] of Object.entries(rep.confidence))
+      h += '<li>' + esc(k) + ': ' + esc(v) + '</li>';
+    h += '</ul></div>';
+    if (photo) {
+      h += '<div class="row"><div><canvas class="preview" id="bustOverlay"></canvas></div>' +
+        '<div class="note">magenta = areola fit · red = nipple · yellow = cleavage shadow · ' +
+        'cyan = mound width · green = fold line.</div></div>';
+    }
+    const html = card('breast telemetry <span class="note">' + esc(BUST_SCHEMA) + '</span>', h);
+    // overlay draws after insertion into the DOM
+    setTimeout(() => {
+      const cv = $('bustOverlay');
+      if (cv && photo) drawBreastOverlay(cv, photo.img, rep);
+    }, 0);
+    return html;
+  }
+
   async function embeddingFor(idx) {
     if (!embedCache[idx])
       embedCache[idx] = await P.embedFace(kSessions, kNames, photo.rgb, photo.w, photo.h, faces[idx]);
@@ -390,6 +440,7 @@ import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, mea
     hasRun = false;
     try {
       photo = await readPhoto(file);
+      photoName = (file && file.name) || 'upload';
       faces = []; embedCache = {}; faceA = 0; faceB = 1;
       if (!kinshipReady) {
         setBar(0, 'loading detection models…');
@@ -398,7 +449,8 @@ import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, mea
       }
       $('runstate').textContent = 'detecting faces…';
       faces = await P.detectFaces(kSessions, kNames, photo.rgb, photo.w, photo.h);
-      if (!faces.length) {
+      const bustOnly = !faces.length && $('tBust').checked;
+      if (!faces.length && !bustOnly) {
         $('runstate').textContent = 'no face detected in this photo';
         return;
       }
@@ -407,16 +459,19 @@ import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, mea
       $('runcard').classList.remove('hidden');
       renderChips(); drawPreview();
       $('runstate').textContent = faces.length + ' face' + (faces.length > 1 ? 's' : '') +
-        ' detected — pick instruments and run.';
+        ' detected' + (bustOnly ? ' — body-only mode (breast telemetry)' : ' — pick instruments and run.');
     } catch (e) {
       $('runstate').innerHTML = '<span class="err">' + esc(e.message || e) + '</span>';
     }
   }
 
   async function run() {
-    if (!photo || !faces.length || !kinshipReady) return;
+    if (!photo || !kinshipReady) return;
     $('run').disabled = true;
-    const wantAge = $('tAge').checked, wantTele = $('tTele').checked, wantKin = $('tKin').checked;
+    const wantAge = $('tAge').checked && faces.length > 0;
+    const wantTele = $('tTele').checked && faces.length > 0;
+    const wantKin = $('tKin').checked && faces.length > 1;
+    const wantBust = $('tBust').checked;
     const rep = {
       generated_at: new Date().toISOString(),
       tool: 'workbench',
@@ -457,6 +512,17 @@ import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, mea
         const r = await instrumentKinship();
         rep.instruments.kinship = r;
         html += renderKinship(r);
+        $('report').innerHTML = html;
+      }
+      if (wantBust) {
+        try {
+          const r = await instrumentBreast(photoName);
+          rep.instruments.breast_telemetry = r;
+          html += renderBreast(r);
+        } catch (e) {
+          html += card('breast telemetry', '<p class="note err">breast telemetry failed: ' + esc(e.message || e) + '</p>');
+          rep.instruments.breast_telemetry = { error: String(e.message || e) };
+        }
         $('report').innerHTML = html;
       }
       lastReport = rep;
@@ -502,6 +568,33 @@ import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, mea
     faceB = +e.target.value;
     renderChips(); drawPreview();
     if (hasRun) run();
+  };
+  $('bustImport').onclick = () => {
+    const st = $('bustImportState');
+    let obj;
+    try {
+      obj = JSON.parse($('bustPaste').value);
+    } catch (e) {
+      st.innerHTML = '<span class="err">not valid JSON: ' + esc(e.message) + '</span>';
+      return;
+    }
+    const v = validateBreastTelemetry(obj);
+    if (!v.ok) {
+      st.innerHTML = '<span class="err">schema check failed: ' + esc(v.errors.join('; ')) + '</span>';
+      return;
+    }
+    const rep = {
+      generated_at: new Date().toISOString(),
+      tool: 'workbench',
+      faces_detected: faces.length,
+      subject_a: faceA,
+      instruments: { breast_telemetry: obj },
+    };
+    lastReport = rep;
+    hasRun = true;
+    $('report').innerHTML = renderBreast(obj);
+    $('exportcard').classList.remove('hidden');
+    st.textContent = 'imported ' + BUST_SCHEMA + ' — rendered below.';
   };
   $('copyjson').onclick = async () => {
     try {

@@ -116,12 +116,19 @@
     <div>
       <label class="tgl"><input type="checkbox" id="tAge" checked> age estimation <span class="note">(ViT bracket classifier + genderage second opinion)</span></label><br>
       <label class="tgl"><input type="checkbox" id="tTele" checked> facial telemetry <span class="note">(17-ratio MediaPipe vector)</span></label><br>
-      <label class="tgl"><input type="checkbox" id="tKin" checked> kinship <span class="note">(A vs B embeddings — needs two faces)</span></label>
+      <label class="tgl"><input type="checkbox" id="tKin" checked> kinship <span class="note">(A vs B embeddings — needs two faces)</span></label><br>
+      <label class="tgl"><input type="checkbox" id="tBust" checked> breast telemetry <span class="note">(breast_telemetry/v1 — torso photos, adult subjects; runs without a face)</span></label>
     </div>
     <div style="margin-top:10px">
       <button class="go" id="run">run workbench</button>
       <span class="status" id="runstate"></span>
     </div>
+    <details style="margin-top:10px">
+      <summary class="note" style="cursor:pointer">paste breast_telemetry/v1 JSON instead</summary>
+      <textarea id="bustPaste" rows="6" style="width:100%;margin-top:6px;font-family:monospace;font-size:12px" placeholder='{"schema":"breast_telemetry/v1", …}'></textarea>
+      <div style="margin-top:6px"><button class="ghost" id="bustImport">import &amp; render</button>
+      <span class="status" id="bustImportState"></span></div>
+    </details>
   </div>
 
   <div id="report"></div>
