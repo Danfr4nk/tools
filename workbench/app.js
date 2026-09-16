@@ -8,9 +8,10 @@
  * Everything runs on-device. Nothing is uploaded.
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
-import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, measureImage } from '../attraction/js/measure.js';
+import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
 import { measureBreastTelemetry, validateBreastTelemetry } from '../attraction/js/breast.js';
 import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship } from './render.js';
+import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
 (function () {
   'use strict';
@@ -219,21 +220,41 @@ import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship } fr
     const cropImg = await cropToImage(faces[faceIdx]);
     let m = measureImage(cropImg);
     let src = 'face crop';
+    let ovImg = cropImg;
     if (!m) {
       // Fallback: run the landmarker on the full photo. Distinguishes a bad
       // crop from a model/environment problem, and still yields telemetry.
       const cropErr = detectError();
       m = measureImage(photo.img);
       src = 'full photo (crop fallback)';
+      ovImg = photo.img;
       if (!m) throw new Error('no landmarks (crop: ' + cropErr + '; full photo: ' + detectError() + ')');
     }
-    return {
+    // Annotated overlay: the lab's telestrator on the measured image, cropped
+    // to the face like the lab's output. Baked into a PNG data URL so the
+    // report card shows it and the export carries the guidelines with it.
+    let annotatedPng = null;
+    try {
+      const lm = detectLandmarks(ovImg);
+      const d = computeFaceOverlayData(lm);
+      if (d) {
+        const iw = ovImg.naturalWidth || ovImg.width, ih = ovImg.naturalHeight || ovImg.height;
+        annotatedPng = annotatedPngDataUrl(
+          ovImg, lm, d, 'face ' + (faceIdx + 1) + ' · ' + iw + '×' + ih + 'px ' + src);
+      }
+    } catch (e) { console.warn('overlay render failed:', e); }
+    const out = {
       metrics: m,
       measured_on: src,
       inference_delegate: landmarkerDelegate(),
       model: 'MediaPipe FaceLandmarker (float16)',
       method: 'same 17-ratio vector as the attraction telemetry lab',
     };
+    if (annotatedPng) {
+      out.annotated_png_dataurl = annotatedPng;
+      window.__wbTelePng = { dataUrl: annotatedPng, faceIdx };
+    }
+    return out;
   }
 
   async function instrumentBreast(fileName) {
@@ -361,6 +382,7 @@ import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship } fr
     $('report').innerHTML = '';
     $('exportcard').classList.add('hidden');
     hasRun = false;
+    window.__wbTelePng = null; // stale annotated PNGs never survive a new photo
     try {
       photo = await readPhoto(file);
       photoName = (file && file.name) || 'upload';
@@ -452,6 +474,8 @@ import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship } fr
       window.__wbLastReport = rep; // shared with import.js (export after import)
       hasRun = true;
       $('exportcard').classList.remove('hidden');
+      const dlp = $('dltelepng');
+      if (dlp) dlp.style.display = window.__wbTelePng ? '' : 'none';
       $('runstate').textContent = 'done.';
     } catch (e) {
       $('runstate').innerHTML = '<span class="err">run failed: ' + esc(e.message || e) + '</span>';
@@ -505,6 +529,21 @@ import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship } fr
     download('workbench-report.json', JSON.stringify(window.__wbLastReport || lastReport, null, 2));
     $('exportstate').textContent = 'downloaded.';
   };
+  // annotated telemetry PNG (guidelines baked in) — shown only when the
+  // facial telemetry instrument produced one this run
+  const dlp = $('dltelepng');
+  if (dlp) {
+    dlp.style.display = 'none';
+    dlp.onclick = () => {
+      const t = window.__wbTelePng;
+      if (!t) { $('exportstate').textContent = 'no annotated telemetry this run.'; return; }
+      const a = document.createElement('a');
+      a.href = t.dataUrl;
+      a.download = 'workbench-telemetry-face' + (t.faceIdx + 1) + '-annotated.png';
+      document.body.appendChild(a); a.click(); a.remove();
+      $('exportstate').textContent = 'downloaded.';
+    };
+  }
   window.addEventListener('unhandledrejection', e => {
     $('runstate').innerHTML = '<span class="err">error: ' +
       esc(String((e.reason && e.reason.message) || e.reason || e)) + '</span>';

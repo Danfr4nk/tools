@@ -44,12 +44,16 @@ export function renderAge(r, emb, faceIdx) {
 }
 
 export function renderTelemetry(r, faceIdx) {
-  let h = '<table class="metrics">';
+  let h = '';
+  if (r.annotated_png_dataurl)
+    h += '<div style="margin-bottom:10px"><img class="preview" src="' + r.annotated_png_dataurl +
+      '" alt="face crop with telemetry guidelines"></div>';
+  h += '<table class="metrics">';
   for (const k of TELEMETRY_SHOW)
     h += '<tr><td>' + esc(METRIC_LABELS[k] || k) + ' <span class="note">' + esc(k) + '</span></td>' +
       '<td>' + (typeof r.metrics[k] === 'number' ? r.metrics[k].toFixed(3) : esc(r.metrics[k])) + '</td></tr>';
   h += '</table><p class="note">Full 17-metric vector is in the exported JSON. ' +
-    esc(r.method) + '.</p>';
+    esc(r.method) + '. Measured on: ' + esc(r.measured_on || 'face crop') + '.</p>';
   return card('facial telemetry — face ' + (faceIdx + 1), h);
 }
 
