@@ -8,7 +8,7 @@
  * Everything runs on-device. Nothing is uploaded.
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
-import { ensureLandmarker, landmarkerError, detectError, measureImage, METRIC_LABELS } from '../attraction/js/measure.js';
+import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, measureImage, METRIC_LABELS } from '../attraction/js/measure.js';
 
 (function () {
   'use strict';
@@ -234,6 +234,7 @@ import { ensureLandmarker, landmarkerError, detectError, measureImage, METRIC_LA
     return {
       metrics: m,
       measured_on: src,
+      inference_delegate: landmarkerDelegate(),
       model: 'MediaPipe FaceLandmarker (float16)',
       method: 'same 17-ratio vector as the attraction telemetry lab',
     };

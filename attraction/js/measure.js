@@ -32,42 +32,51 @@ const EXTRA = {
   mouth_inner_top: 13, mouth_inner_bot: 14,
 };
 
+// Which delegate the live landmarker is actually running inference on
+// ('GPU' | 'CPU' | null). Set after the warmup inference proves the delegate.
+let delegate = null;
+export function landmarkerDelegate() { return delegate; }
+
+// Exercises the full inference path on a blank 64x64 canvas. Model *creation*
+// with the GPU delegate can succeed on machines where inference then blows up
+// (headless Chromium: "Cannot read properties of undefined (reading
+// 'activeTexture')"), so the warmup — not creation — is the real probe.
+function warmupDetect(lm) {
+  if (typeof document === 'undefined') return;
+  const cv = document.createElement('canvas');
+  cv.width = 64; cv.height = 64;
+  lm.detect(cv); // throws on a broken delegate; returns empty on a good one
+}
+
 export async function ensureLandmarker(onStatus) {
   if (landmarker || failed) return landmarker;
   const errors = [];
   let fileset = null;
-  try {
-    onStatus && onStatus('loading landmark model…');
-    fileset = await FilesetResolver.forVisionTasks(WASM_URL);
-    landmarker = await FaceLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-      runningMode: 'IMAGE',
-      numFaces: 1,
-      outputFacialTransformationMatrixes: true,
-    });
-    ready = true;
-    onStatus && onStatus('landmarks ready');
-  } catch (e) {
-    errors.push('gpu: ' + ((e && e.message) || e));
-    // GPU delegate can fail on some devices; retry CPU, reusing the fileset
-    // when we already have one.
+  for (const del of ['GPU', 'CPU']) {
+    let lm = null;
     try {
+      onStatus && onStatus('loading landmark model (' + del + ')…');
       if (!fileset) fileset = await FilesetResolver.forVisionTasks(WASM_URL);
-      landmarker = await FaceLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+      lm = await FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: MODEL_URL, delegate: del },
         runningMode: 'IMAGE',
         numFaces: 1,
         outputFacialTransformationMatrixes: true,
       });
+      warmupDetect(lm);
+      landmarker = lm;
+      delegate = del;
       ready = true;
       onStatus && onStatus('landmarks ready');
-    } catch (e2) {
-      errors.push('cpu: ' + ((e2 && e2.message) || e2));
-      failed = true;
-      failedReason = errors.join(' | ');
-      onStatus && onStatus('measurement unavailable');
+      return landmarker;
+    } catch (e) {
+      errors.push(del.toLowerCase() + ': ' + ((e && e.message) || e));
+      try { lm && lm.close(); } catch (_) { /* drop the half-built instance */ }
     }
   }
+  failed = true;
+  failedReason = errors.join(' | ');
+  onStatus && onStatus('measurement unavailable');
   return landmarker;
 }
 
