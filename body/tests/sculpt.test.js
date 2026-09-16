@@ -137,11 +137,14 @@ const nrm = computeNormals(pos, idx);
 test('winding is outward: apex normals point forward (+z)', () => {
   const ap = detectApexes(pos);
   for (const A of ap) {
-    let best = -2, bi = 0;
+    // nearest vertex in 3D to the detected apex (the detected apex is an
+    // average of top verts, not itself a vertex — a fixed xy radius can miss)
+    let bd = 1e9, bi = 0;
     for (let i = 0; i < pos.length / 3; i++) {
-      const d = Math.hypot(pos[i * 3] - A.x, pos[i * 3 + 1] - A.y);
-      if (d < 3 && pos[i * 3 + 2] > best) { best = pos[i * 3 + 2]; bi = i; }
+      const d = Math.hypot(pos[i * 3] - A.x, pos[i * 3 + 1] - A.y, pos[i * 3 + 2] - A.z);
+      if (d < bd) { bd = d; bi = i; }
     }
+    assert.ok(bd < 25, 'apex vertex within 25mm, got ' + bd.toFixed(1));
     assert.ok(nrm[bi * 3 + 2] > 0.9, 'apex normal z = ' + nrm[bi * 3 + 2]);
   }
 });
@@ -170,7 +173,10 @@ test('sculptBust: apex lands at chestWall + full profile, foot untouched', () =>
       if (d < bd) { bd = d; bi = i; }
     }
     const moved = Math.hypot(out[bi * 3] - pos[bi * 3], out[bi * 3 + 1] - pos[bi * 3 + 1], out[bi * 3 + 2] - pos[bi * 3 + 2]);
-    const expect = H + 1.6 + 5.0 - A.bump; // profile minus neutral bump
+    // expected offset evaluated at the vertex's real distance from the apex
+    // (the detected apex is an average, not a vertex — falloff applies)
+    const dx = pos[bi * 3] - A.x, dy = pos[bi * 3 + 1] - A.y;
+    const expect = bustOffset(dx, dy, T) - A.bump; // profile minus neutral bump
     assert.ok(Math.abs(moved - expect) < 3, 'moved ' + moved.toFixed(1) + ' expected ' + expect.toFixed(1));
     // areola tint present near apex
     assert.ok(colors[bi * 3] < 0.95, 'tint r = ' + colors[bi * 3]);

@@ -141,6 +141,22 @@ async function getBase() {
 }
 
 let current = null;
+let hairMesh = null;
+const wireBodyMat = new THREE.MeshBasicMaterial({ color: 0x8f9bb0, wireframe: true });
+const hairShadedMat = new THREE.MeshStandardMaterial({ color: 0x2a1e17, roughness: 0.65, metalness: 0 });
+const hairWireMat = new THREE.MeshBasicMaterial({ color: 0x8f9bb0, wireframe: true });
+let wireOn = false;
+async function ensureHair() {
+  if (hairMesh || !glOK) return;
+  try {
+    const group = await new OBJLoader().loadAsync('hair-neutral.obj');
+    const g = mergeVertices(group.children[0].geometry);
+    g.computeVertexNormals();
+    hairMesh = new THREE.Mesh(g, hairShadedMat);
+    hairMesh.castShadow = true;
+    scene.add(hairMesh);
+  } catch (e) { /* hair is cosmetic — body still works without it */ }
+}
 async function setMannequin(T) {
   const hint = $('hint3d');
   if (!glOK) {
@@ -167,11 +183,14 @@ async function setMannequin(T) {
       current.material.dispose();
     }
     current = mesh;
-    current.userData.material = mat;
+    current.userData.shadedMat = mat;
+    current.material = wireOn ? wireBodyMat : mat;
+    ensureHair();
+    if (hairMesh) hairMesh.material = wireOn ? hairWireMat : hairShadedMat;
     scene.add(current);
     if (hint) hint.textContent = 'drag to orbit · scroll to zoom';
     const ml = $('meshLine');
-    if (ml) ml.textContent = 'mesh: ' + (geo.index.count / 3000).toFixed(1) + 'k triangles · one continuous surface · CC0 base';
+    if (ml) ml.textContent = 'mesh: ' + (geo.index.count / 3000).toFixed(1) + 'k triangles · CC0 base + procedural hair';
   } catch (e) {
     if (hint) hint.textContent = 'could not load body-neutral.obj: ' + e.message;
   }
@@ -273,10 +292,11 @@ $('tab2d').onclick = () => {
 /* ---------------- boot ---------------- */
 $('wireToggle').onclick = () => {
   if (!current) return;
-  const m = current.userData.material;
-  m.wireframe = !m.wireframe;
-  $('wireToggle').classList.toggle('on', m.wireframe);
-  $('wireToggle').textContent = m.wireframe ? 'wireframe: on' : 'wireframe';
+  wireOn = !wireOn;
+  current.material = wireOn ? wireBodyMat : current.userData.shadedMat;
+  if (hairMesh) hairMesh.material = wireOn ? hairWireMat : hairShadedMat;
+  $('wireToggle').classList.toggle('on', wireOn);
+  $('wireToggle').textContent = wireOn ? 'wireframe: on' : 'wireframe';
 };
 renderAll(SAMPLE, deriveParams(SAMPLE));
 fit();
