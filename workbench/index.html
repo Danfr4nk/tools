@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>workbench — one photo, every instrument</title>
+<meta name="description" content="Upload one photo. Shared face detection fans out to age estimation, kinship comparison, and facial telemetry in a single pass — all on-device.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0e14; color: #e6e9f0;
+         font: 15px/1.55 -apple-system, "Segoe UI", Inter, Roboto, sans-serif; }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 28px 18px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: #8b93a7; margin: 0 0 20px; max-width: 70ch; }
+  .sub a, .foot a { color: #7dd3fc; }
+  .card { background: #121722; border: 1px solid #232b3d; border-radius: 14px;
+          padding: 18px; margin: 14px 0; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #aeb8cf;
+             text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+  .bar { height: 8px; background: #1d2536; border-radius: 99px; overflow: hidden; margin: 8px 0; }
+  .bar > div { height: 100%; width: 0; background: linear-gradient(90deg,#7dd3fc,#a78bfa); transition: width .2s; }
+  #modelmsg { color: #8b93a7; font-size: 13px; min-height: 20px; }
+  .drop { border: 2px dashed #2b3a55; border-radius: 14px;
+          padding: 44px 20px; text-align: center; color: #8b93a7; cursor: pointer;
+          transition: border-color .15s, background .15s; }
+  .drop:hover, .drop.over { border-color: #7dd3fc; background: #101827; }
+  .drop .big { font-size: 17px; color: #cfd6e4; margin-bottom: 6px; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 300px; }
+  canvas.preview { max-width: 100%; border-radius: 10px; display: block; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .chip { background: #1a2233; border: 1px solid #2b3a55; color: #cfd6e4;
+          border-radius: 99px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .chip.on { background: #164e63; border-color: #7dd3fc; color: #fff; }
+  .chip:disabled { opacity: .4; cursor: default; }
+  label.tgl { display: inline-flex; align-items: center; gap: 8px; margin: 0 18px 8px 0;
+              font-size: 14px; color: #cfd6e4; cursor: pointer; }
+  label.tgl input { accent-color: #7dd3fc; width: 16px; height: 16px; }
+  button.go { background: #7dd3fc; color: #06202e; border: 0; border-radius: 10px;
+              font-size: 16px; font-weight: 700; padding: 12px 28px; cursor: pointer; }
+  button.go:disabled { opacity: .45; cursor: default; }
+  button.ghost { background: #1a2233; color: #cfd6e4; border: 1px solid #2b3a55;
+                 border-radius: 10px; padding: 9px 18px; font-size: 14px; cursor: pointer; }
+  .kpi { display: flex; gap: 22px; flex-wrap: wrap; margin: 6px 0 4px; }
+  .kpi .v { font-size: 30px; font-weight: 750; letter-spacing: -0.02em; }
+  .kpi .l { font-size: 12px; color: #8b93a7; text-transform: uppercase; letter-spacing: .06em; }
+  .dist { margin: 10px 0 2px; }
+  .dist .drow { display: flex; align-items: center; gap: 10px; margin: 3px 0; font-size: 13px; }
+  .dist .db { flex: 1; height: 10px; background: #1d2536; border-radius: 99px; overflow: hidden; }
+  .dist .db > div { height: 100%; background: #7dd3fc; }
+  .dist .dl { width: 64px; color: #8b93a7; }
+  .dist .dp { width: 52px; text-align: right; color: #cfd6e4; font-variant-numeric: tabular-nums; }
+  table.metrics { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.metrics td { padding: 5px 8px; border-bottom: 1px solid #1c2434; }
+  table.metrics td:last-child { text-align: right; font-variant-numeric: tabular-nums; color: #cfd6e4; }
+  table.metrics td:first-child { color: #8b93a7; }
+  .cav { background: #1a1f2e; border-left: 3px solid #f59e0b; padding: 7px 12px;
+         margin: 6px 0; font-size: 13.5px; border-radius: 0 8px 8px 0; color: #d8cfae; }
+  .note { font-size: 13px; color: #8b93a7; }
+  .err { color: #f87171; }
+  .status { font-size: 13px; color: #8b93a7; min-height: 20px; margin-top: 8px; }
+  .foot { margin-top: 34px; color: #69718a; font-size: 13px; }
+  select { background: #1a2233; color: #cfd6e4; border: 1px solid #2b3a55;
+           border-radius: 8px; padding: 7px 10px; font-size: 14px; }
+  .hidden { display: none !important; }
+</style>
+<script type="importmap">
+{ "imports": { "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm" } }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+<script src="../kinship/pipeline.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <h1>workbench</h1>
+  <p class="sub">One photo in. Shared face detection fans out to every instrument in a single
+  pass — <a href="../age/">age estimation</a>, <a href="../kinship/">kinship comparison</a>,
+  and <a href="../attraction/telemetry.html">facial telemetry</a> — then lands in one unified
+  report. Everything runs on your device; the photo never leaves this page.</p>
+
+  <div class="card">
+    <h2>models</h2>
+    <div class="bar"><div id="modelfill"></div></div>
+    <div id="modelmsg">warming up…</div>
+  </div>
+
+  <div class="card" id="uploadcard">
+    <h2>photo</h2>
+    <div class="drop" id="drop">
+      <div class="big">drop a photo here, click to browse, or paste from clipboard</div>
+      <div>one photo is all it takes — every instrument below reads from the same detection pass</div>
+    </div>
+    <input type="file" id="file" accept="image/*" class="hidden">
+  </div>
+
+  <div class="card hidden" id="facecard">
+    <h2>faces detected</h2>
+    <div class="row">
+      <div><canvas class="preview" id="preview"></canvas></div>
+      <div>
+        <div class="chips" id="chipsA"></div>
+        <div class="note" style="margin-bottom:10px">Subject <b>A</b> — every instrument below reads this face.</div>
+        <div id="kinshipPick" class="hidden">
+          <label class="note" for="faceB">Kinship target <b>B</b>:</label><br>
+          <select id="faceB"></select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="runcard">
+    <h2>instruments</h2>
+    <div>
+      <label class="tgl"><input type="checkbox" id="tAge" checked> age estimation <span class="note">(ViT bracket classifier + genderage second opinion)</span></label><br>
+      <label class="tgl"><input type="checkbox" id="tTele" checked> facial telemetry <span class="note">(17-ratio MediaPipe vector)</span></label><br>
+      <label class="tgl"><input type="checkbox" id="tKin" checked> kinship <span class="note">(A vs B embeddings — needs two faces)</span></label>
+    </div>
+    <div style="margin-top:10px">
+      <button class="go" id="run">run workbench</button>
+      <span class="status" id="runstate"></span>
+    </div>
+  </div>
+
+  <div id="report"></div>
+
+  <div class="card hidden" id="exportcard">
+    <h2>export</h2>
+    <button class="ghost" id="copyjson">copy report JSON</button>
+    <button class="ghost" id="dljson">download report JSON</button>
+    <span class="status" id="exportstate"></span>
+  </div>
+
+  <p class="foot">Shared detection: SCRFD (buffalo_l) → 5-point alignment → ArcFace embeddings.
+  Age: ViT-Base bracket classifier (expected age = probability-weighted bracket midpoints) with a
+  genderage regression second opinion. Telemetry: the same 17-ratio MediaPipe vector as the
+  attraction lab. Kinship: cosine similarity on ArcFace embeddings with the heuristic confidence
+  calibration — a resemblance meter, not a test. First run downloads models (~250&nbsp;MB total);
+  everything is cached by your browser afterwards.</p>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

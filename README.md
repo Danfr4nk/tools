@@ -32,6 +32,11 @@ Each tool lives in its own directory with its own README:
   age-bracket classifier fully in-browser (Transformers.js, local ONNX —
   nothing uploaded); Python CLI (`age.py`) uses the same model via
   HuggingFace transformers. See `age/README.md` for the SOTA research notes.
+- **`workbench/`** — one photo in, every instrument out. Shared SCRFD face
+  detection fans out to age estimation, facial telemetry, and kinship
+  comparison in a single pass (reuses `kinship/`'s pipeline + models,
+  `age/`'s classifier, `attraction/`'s telemetry), with one unified report
+  and JSON export. All on-device.
 
 ## Adding a tool
 
