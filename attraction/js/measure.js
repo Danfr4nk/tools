@@ -86,17 +86,24 @@ export function detectLandmarks(img) {
 // (facialTransformationMatrixes — column-major, element (r,c) = data[c*4+r]).
 // matrix is null when the model/wasm predates the option or the field is
 // absent; callers must fall back to 2D proxies and label the source.
+// Last detectFace() failure reason: 'not-initialized', 'threw: <msg>', or
+// 'empty' (detect ran clean but returned no faces). Null after a success.
+let lastDetectError = null;
+export function detectError() { return lastDetectError; }
+
 export function detectFace(img) {
-  if (!landmarker) return null;
+  if (!landmarker) { lastDetectError = 'not-initialized'; return null; }
   try {
     const res = landmarker.detect(img);
-    if (!res.faceLandmarks || !res.faceLandmarks.length) return null;
+    if (!res.faceLandmarks || !res.faceLandmarks.length) { lastDetectError = 'empty'; return null; }
     const mx = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0];
     const matrix = (mx && mx.data && mx.data.length === 16)
       ? { rows: mx.rows, columns: mx.columns, data: Array.from(mx.data) }
       : null;
+    lastDetectError = null;
     return { landmarks: res.faceLandmarks[0], matrix };
   } catch (e) {
+    lastDetectError = 'threw: ' + ((e && e.message) || e);
     return null;
   }
 }

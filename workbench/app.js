@@ -8,7 +8,7 @@
  * Everything runs on-device. Nothing is uploaded.
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
-import { ensureLandmarker, landmarkerError, measureImage, METRIC_LABELS } from '../attraction/js/measure.js';
+import { ensureLandmarker, landmarkerError, detectError, measureImage, METRIC_LABELS } from '../attraction/js/measure.js';
 
 (function () {
   'use strict';
@@ -44,7 +44,7 @@ import { ensureLandmarker, landmarkerError, measureImage, METRIC_LABELS } from '
   let ageClassifier = null, ageReady = false;
   let teleReady = false;
 
-  let photo = null;          // {rgb, w, h}
+  let photo = null;          // {rgb, w, h, img}
   let faces = [];            // SCRFD faces, largest-first
   let faceA = 0, faceB = 1;
   let embedCache = {};       // faceIndex -> embedFace result
@@ -156,7 +156,7 @@ import { ensureLandmarker, landmarkerError, measureImage, METRIC_LABELS } from '
           rgb[j] = px[i]; rgb[j + 1] = px[i + 1]; rgb[j + 2] = px[i + 2];
         }
         URL.revokeObjectURL(url);
-        resolve({ rgb, w, h });
+        resolve({ rgb, w, h, img: im });
       };
       im.onerror = () => reject(new Error('could not read image'));
       im.src = url;
@@ -220,11 +220,20 @@ import { ensureLandmarker, landmarkerError, measureImage, METRIC_LABELS } from '
     if (!teleReady) {
       await loadTelemetry(m => { $('runstate').textContent = m; });
     }
-    const img = await cropToImage(faces[faceIdx]);
-    const m = measureImage(img);
-    if (!m) throw new Error('no landmarks found on the face crop');
+    const cropImg = await cropToImage(faces[faceIdx]);
+    let m = measureImage(cropImg);
+    let src = 'face crop';
+    if (!m) {
+      // Fallback: run the landmarker on the full photo. Distinguishes a bad
+      // crop from a model/environment problem, and still yields telemetry.
+      const cropErr = detectError();
+      m = measureImage(photo.img);
+      src = 'full photo (crop fallback)';
+      if (!m) throw new Error('no landmarks (crop: ' + cropErr + '; full photo: ' + detectError() + ')');
+    }
     return {
       metrics: m,
+      measured_on: src,
       model: 'MediaPipe FaceLandmarker (float16)',
       method: 'same 17-ratio vector as the attraction telemetry lab',
     };
