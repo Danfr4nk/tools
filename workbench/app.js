@@ -8,8 +8,9 @@
  * Everything runs on-device. Nothing is uploaded.
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
-import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, measureImage, METRIC_LABELS } from '../attraction/js/measure.js';
-import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js';
+import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, measureImage } from '../attraction/js/measure.js';
+import { measureBreastTelemetry, validateBreastTelemetry } from '../attraction/js/breast.js';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship } from './render.js';
 
 (function () {
   'use strict';
@@ -18,8 +19,6 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
   env.allowRemoteModels = true;
 
   const $ = id => document.getElementById(id);
-  const esc = s => String(s).replace(/[&<>"']/g, c =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   /* ---------------- constants ---------------- */
 
@@ -33,11 +32,6 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
   const AGE_MODEL_ID = 'onnx-community/fairface_age_image_detection-ONNX';
   const AGE_LABELS = ['0-2', '3-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', 'more than 70'];
   const AGE_MIDPOINTS = [1, 6, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 78];
-
-  // telemetry metrics worth surfacing in the unified report (full 17 in JSON)
-  const TELEMETRY_SHOW = ['width_height_ratio', 'jaw_to_cheek', 'ipd_to_cheek',
-    'eye_w_to_h', 'nose_to_cheek', 'mouth_to_cheek', 'lip_fullness',
-    'canthal_tilt_mean', 'gonial_angle_mean', 'mean_asymmetry'];
 
   /* ---------------- state ---------------- */
 
@@ -251,45 +245,6 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
     return rep;
   }
 
-  function renderBreast(rep) {
-    const mp = rep.measured_px, sm = rep.scale_model, ph = rep.modeled_physical, ce = rep.cup_estimate;
-    const row = (k, v) => '<tr><td>' + esc(k) + '</td><td>' + esc(v) + '</td></tr>';
-    let h = '<div class="kpi">' +
-      '<div><div class="v">' + esc(ce.verdict) + '</div><div class="l">cup verdict (modeled)</div></div>' +
-      '<div><div class="v">' + ph.right_areola_diameter_mm + ' mm</div><div class="l">areola diameter</div></div>' +
-      '<div><div class="v">' + ph.right_mound_width_mm + ' mm</div><div class="l">mound width</div></div>' +
-      '<div><div class="v">' + sm.mm_per_px + '</div><div class="l">mm/px (nail anchor)</div></div></div>';
-    h += '<table class="metrics">' +
-      row('nipple (px)', mp.right_nipple.x + ', ' + mp.right_nipple.y) +
-      row('areola diameter', mp.right_areola_diameter_px + ' px') +
-      row('mound width', mp.right_mound_width_px + ' px') +
-      row('nipple → fold', mp.right_nipple_to_fold_px + ' px (fold y=' + mp.right_fold_y_px + ')') +
-      row('cleavage x @ nipple height', mp.cleavage_x_at_nipple_height_px + ' px') +
-      row('nail anchor', mp.nail_anchor_median_width_px + ' px median') +
-      row('band table', Object.entries(ce.band_table).map(([b, c]) => b + ': ' + c).join(' · ')) +
-      '</table>';
-    h += '<p class="note"><b>method:</b> ' + esc(ce.method) + '</p>';
-    h += '<p class="note"><b>assumption:</b> ' + esc(ce.assumption) + ' ' + esc(ce.note) + '</p>';
-    h += '<p class="note"><b>scale:</b> ' + esc(sm.assumption) + ' ' + esc(sm.caveat) + '</p>';
-    h += '<p class="note"><b>left breast:</b> ' + esc(rep.left_breast.note || JSON.stringify(rep.left_breast)) + '</p>';
-    h += '<div class="note"><b>confidence</b><ul style="margin:4px 0;padding-left:18px">';
-    for (const [k, v] of Object.entries(rep.confidence))
-      h += '<li>' + esc(k) + ': ' + esc(v) + '</li>';
-    h += '</ul></div>';
-    if (photo) {
-      h += '<div class="row"><div><canvas class="preview" id="bustOverlay"></canvas></div>' +
-        '<div class="note">magenta = areola fit · red = nipple · yellow = cleavage shadow · ' +
-        'cyan = mound width · green = fold line.</div></div>';
-    }
-    const html = card('breast telemetry <span class="note">' + esc(BUST_SCHEMA) + '</span>', h);
-    // overlay draws after insertion into the DOM
-    setTimeout(() => {
-      const cv = $('bustOverlay');
-      if (cv && photo) drawBreastOverlay(cv, photo.img, rep);
-    }, 0);
-    return html;
-  }
-
   async function embeddingFor(idx) {
     if (!embedCache[idx])
       embedCache[idx] = await P.embedFace(kSessions, kNames, photo.rgb, photo.w, photo.h, faces[idx]);
@@ -383,53 +338,6 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
     sel.value = faceB;
   }
 
-  function card(title, inner) {
-    return '<div class="card"><h2>' + esc(title) + '</h2>' + inner + '</div>';
-  }
-
-  function renderAge(r, emb) {
-    let h = '<div class="kpi">' +
-      '<div><div class="v">' + r.expected_age.toFixed(1) + '</div><div class="l">expected age (ViT)</div></div>' +
-      '<div><div class="v">' + esc(r.top_bracket) + '</div><div class="l">top bracket · ' +
-      (r.top_confidence * 100).toFixed(1) + '%</div></div>';
-    if (emb) h += '<div><div class="v">' + emb.age + '</div><div class="l">genderage 2nd opinion · ' +
-      esc(emb.sex) + '</div></div>';
-    h += '</div><div class="dist">';
-    const mx = Math.max(...r.distribution.map(d => d.p));
-    for (const d of r.distribution) {
-      h += '<div class="drow"><span class="dl">' + esc(d.bracket) + '</span>' +
-        '<span class="db"><div style="width:' + (mx ? (d.p / mx * 100).toFixed(1) : 0) + '%"></div></span>' +
-        '<span class="dp">' + (d.p * 100).toFixed(1) + '%</span></div>';
-    }
-    h += '</div><p class="note">' + esc(r.method) + '.</p>';
-    return card('age estimation — face ' + (faceA + 1), h);
-  }
-
-  function renderTelemetry(r) {
-    let h = '<table class="metrics">';
-    for (const k of TELEMETRY_SHOW)
-      h += '<tr><td>' + esc(METRIC_LABELS[k] || k) + ' <span class="note">' + esc(k) + '</span></td>' +
-        '<td>' + (typeof r.metrics[k] === 'number' ? r.metrics[k].toFixed(3) : esc(r.metrics[k])) + '</td></tr>';
-    h += '</table><p class="note">Full 17-metric vector is in the exported JSON. ' +
-      esc(r.method) + '.</p>';
-    return card('facial telemetry — face ' + (faceA + 1), h);
-  }
-
-  function renderKinship(r) {
-    if (r.skipped)
-      return card('kinship', '<p class="note">' + esc(r.skipped) + '.</p>');
-    let h = '<div class="kpi">' +
-      '<div><div class="v">' + r.cosine_similarity.toFixed(4) + '</div><div class="l">cosine similarity</div></div>' +
-      '<div><div class="v">' + (r.kinship_confidence * 100).toFixed(1) + '%</div><div class="l">confidence</div></div>' +
-      '</div><p style="font-size:17px;font-weight:650;margin:6px 0">' + esc(r.verdict) + '</p>' +
-      '<p class="note">' + esc(r.verdict_note) + '</p>';
-    for (const c of r.caveats) h += '<div class="cav">' + esc(c) + '</div>';
-    h += '<p class="note">Face A: ' + esc(r.predicted.a.sex) + '/' + r.predicted.a.age +
-      ' · Face B: ' + esc(r.predicted.b.sex) + '/' + r.predicted.b.age + '. ' +
-      esc(r.calibration) + '.</p>';
-    return card('kinship — face ' + (r.face_a + 1) + ' vs face ' + (r.face_b + 1), h);
-  }
-
   /* ---------------- main flow ---------------- */
 
   async function handleFile(file) {
@@ -438,8 +346,11 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
     // routes to the importer instead of failing silently.
     const looksJson = /\.json$/i.test(file.name || '') || (file.type || '').includes('json');
     if (looksJson) {
-      try { importJsonText(await file.text()); }
-      catch (e) { $('importState').innerHTML = '<span class="err">could not read file: ' + esc(e.message || e) + '</span>'; }
+      try {
+        const text = await file.text();
+        if (window.__wbImportText) window.__wbImportText(text);
+        else $('runstate').textContent = 'import module did not load — reload the page and try again.';
+      } catch (e) { $('runstate').textContent = 'could not read file: ' + (e.message || e); }
       return;
     }
     if (!file.type.startsWith('image/')) {
@@ -504,7 +415,7 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
         $('runstate').textContent = 'running age estimation…';
         const r = await instrumentAge(faceA);
         rep.instruments.age = r;
-        html += renderAge(r, emb);
+        html += renderAge(r, emb, faceA);
         $('report').innerHTML = html;
       }
       if (wantTele) {
@@ -512,7 +423,7 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
         try {
           const r = await instrumentTelemetry(faceA);
           rep.instruments.telemetry = r;
-          html += renderTelemetry(r);
+          html += renderTelemetry(r, faceA);
         } catch (e) {
           html += card('facial telemetry', '<p class="note err">telemetry failed: ' + esc(e.message || e) + '</p>');
           rep.instruments.telemetry = { error: String(e.message || e) };
@@ -530,7 +441,7 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
         try {
           const r = await instrumentBreast(photoName);
           rep.instruments.breast_telemetry = r;
-          html += renderBreast(r);
+          html += renderBreast(r, photo ? photo.img : null);
         } catch (e) {
           html += card('breast telemetry', '<p class="note err">breast telemetry failed: ' + esc(e.message || e) + '</p>');
           rep.instruments.breast_telemetry = { error: String(e.message || e) };
@@ -538,6 +449,7 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
         $('report').innerHTML = html;
       }
       lastReport = rep;
+      window.__wbLastReport = rep; // shared with import.js (export after import)
       hasRun = true;
       $('exportcard').classList.remove('hidden');
       $('runstate').textContent = 'done.';
@@ -546,88 +458,6 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
       console.error(e);
     }
     $('run').disabled = false;
-  }
-
-  /* ---------------- JSON import ---------------- */
-
-  // Re-renders a previously exported workbench report (obj.tool === 'workbench').
-  // Each instrument card renders from the saved data; error stubs render as notes.
-  function renderImportedReport(obj) {
-    faceA = Number.isInteger(obj.subject_a) ? obj.subject_a : 0;
-    const ins = obj.instruments;
-    const errCard = (title, msg) =>
-      card(title, '<p class="note err">' + esc(msg) + '</p>');
-    let html = card('imported report',
-      '<p class="note">workbench report · generated ' + esc(obj.generated_at || 'unknown') +
-      ' · ' + (obj.faces_detected || 0) + ' face(s) detected.</p>');
-    if (ins.age) {
-      html += ins.age.error ? errCard('age estimation', ins.age.error)
-        : renderAge(ins.age, obj.face_a_attributes
-            ? { age: obj.face_a_attributes.genderage_age, sex: obj.face_a_attributes.sex }
-            : null);
-    }
-    if (ins.telemetry) {
-      html += ins.telemetry.error ? errCard('facial telemetry', ins.telemetry.error)
-        : (ins.telemetry.metrics ? renderTelemetry(ins.telemetry)
-          : errCard('facial telemetry', 'no metrics in imported JSON'));
-    }
-    if (ins.kinship) {
-      html += ins.kinship.error ? errCard('kinship', ins.kinship.error)
-        : renderKinship(ins.kinship);
-    }
-    if (ins.breast_telemetry) {
-      html += ins.breast_telemetry.error ? errCard('breast telemetry', ins.breast_telemetry.error)
-        : renderBreast(ins.breast_telemetry);
-    }
-    $('report').innerHTML = html;
-  }
-
-  // Accepts either a breast_telemetry/v1 object or a full workbench report.
-  function importReport(obj) {
-    const st = $('importState');
-    const fail = msg => { st.innerHTML = '<span class="err">' + esc(msg) + '</span>'; };
-    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { fail('not a JSON object'); return; }
-    if (obj.schema === BUST_SCHEMA) {
-      const v = validateBreastTelemetry(obj);
-      if (!v.ok) { fail('breast_telemetry schema check failed: ' + v.errors.join('; ')); return; }
-      lastReport = {
-        generated_at: new Date().toISOString(),
-        tool: 'workbench',
-        faces_detected: faces.length,
-        subject_a: faceA,
-        instruments: { breast_telemetry: obj },
-        imported_from: BUST_SCHEMA,
-      };
-      hasRun = true;
-      $('report').innerHTML = renderBreast(obj);
-      $('exportcard').classList.remove('hidden');
-      st.textContent = 'imported ' + BUST_SCHEMA + ' — rendered below.';
-      return;
-    }
-    if (obj.tool === 'workbench' && obj.instruments && typeof obj.instruments === 'object') {
-      const keys = Object.keys(obj.instruments);
-      if (!keys.length) { fail('workbench report has no instruments'); return; }
-      lastReport = obj;
-      hasRun = true;
-      renderImportedReport(obj);
-      $('exportcard').classList.remove('hidden');
-      st.textContent = 'imported workbench report (' + keys.join(', ') + ') — rendered below.';
-      return;
-    }
-    fail('unrecognized JSON — need a workbench report ("tool":"workbench") or ' +
-      'breast_telemetry/v1 ("schema":"breast_telemetry/v1").');
-  }
-
-  function importJsonText(text) {
-    const st = $('importState');
-    let obj;
-    try {
-      obj = JSON.parse(text);
-    } catch (e) {
-      st.innerHTML = '<span class="err">not valid JSON: ' + esc(e.message) + '</span>';
-      return;
-    }
-    importReport(obj);
   }
 
   /* ---------------- export ---------------- */
@@ -663,24 +493,16 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
     renderChips(); drawPreview();
     if (hasRun) run();
   };
-  $('jsonPick').onclick = () => $('jsonFile').click();
-  $('jsonFile').onchange = () => {
-    const f = $('jsonFile').files[0];
-    $('jsonFile').value = ''; // allow re-picking the same file
-    if (!f) return;
-    f.text().then(importJsonText).catch(e => {
-      $('importState').innerHTML = '<span class="err">could not read file: ' + esc(e.message || e) + '</span>';
-    });
-  };
-  $('jsonImportBtn').onclick = () => importJsonText($('jsonPaste').value);
+  // (the import card is wired by import.js, a standalone module)
   $('copyjson').onclick = async () => {
+    const rep = window.__wbLastReport || lastReport;
     try {
-      await navigator.clipboard.writeText(JSON.stringify(lastReport, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify(rep, null, 2));
       $('exportstate').textContent = 'copied.';
     } catch (e) { $('exportstate').textContent = 'copy failed: ' + e.message; }
   };
   $('dljson').onclick = () => {
-    download('workbench-report.json', JSON.stringify(lastReport, null, 2));
+    download('workbench-report.json', JSON.stringify(window.__wbLastReport || lastReport, null, 2));
     $('exportstate').textContent = 'downloaded.';
   };
   window.addEventListener('unhandledrejection', e => {
@@ -689,4 +511,5 @@ import { measureBreastTelemetry, validateBreastTelemetry, drawBreastOverlay, SCH
   });
 
   setBar(0, 'warming up…');
+  window.__wbAppBooted = true; // lets import.js know the photo pipeline is alive
 })();
