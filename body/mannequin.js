@@ -1,39 +1,25 @@
-/* tools/body/mannequin.js v2 — high-poly parametric mannequin, units in mm.
+/* tools/body/mannequin.js v3 — pure bust-sculpt math, no three.js dependency.
  *
- * Design: a generic, anonymized, standard-proportion female body. The JSON
- * regenerates ONLY the bust — everything else is fixed default anatomy.
- * The bust is sculpted by displacing the torso mesh itself (no intersecting
- * parts), so the result is one continuous high-poly surface.
+ * The body is a baked neutral mesh (body-neutral.obj): MakeHuman CC0 assets —
+ * base.obj + ethnicity-averaged female-young macro target + min-cup delta,
+ * face defeatured. Units mm, y-up, feet at y=0, +z forward.
+ *
+ * The JSON regenerates ONLY the bust: apexes are auto-detected on the neutral
+ * mesh, the mesh's own small bust is subtracted (neutralBump × moundFalloff),
+ * and the measured profile is sculpted in along the surface normals.
+ * Bust POSITION follows the base mesh; the JSON drives SHAPE (width,
+ * projection, areola, nipple, fold depth). nipLat still feeds the 2D
+ * schematic and the readout.
  *
  * Measured (from breast_telemetry/v1): nipple lateral offset + height above
  * fold (px deltas × mm/px), areola diameter, mound width (absolute mm).
- * Modeled (labeled as such): apex projection, body proportions, left mirror.
+ * Modeled (labeled as such): apex projection, bust position, left mirror.
  */
-import * as THREE from 'three';
 
 export const PARAMS = {
   body: 0xc9ced6,
-  foldY: 1150,
+  foldY: 1150,            // 2D schematic reference only
   projectionFactor: 0.45, // MODELED: apex projection = factor × mound half-width
-  superP: 0.85,           // cross-section fullness (<1 = fuller than ellipse)
-  radialSegments: 176,
-  ringSamples: 80,
-  // control rings: y, rx (half-width), rz (half-depth), fb (front boost)
-  controlRings: [
-    { y: 760, rx: 148, rz: 116, fb: 0.00 },
-    { y: 820, rx: 165, rz: 126, fb: 0.00 },
-    { y: 880, rx: 174, rz: 130, fb: 0.00 },
-    { y: 940, rx: 158, rz: 120, fb: 0.01 },
-    { y: 1010, rx: 142, rz: 106, fb: 0.01 },
-    { y: 1080, rx: 144, rz: 108, fb: 0.02 },
-    { y: 1150, rx: 150, rz: 114, fb: 0.02 },
-    { y: 1210, rx: 163, rz: 130, fb: 0.05 },
-    { y: 1280, rx: 172, rz: 134, fb: 0.06 },
-    { y: 1340, rx: 182, rz: 124, fb: 0.04 },
-    { y: 1400, rx: 194, rz: 110, fb: 0.02 },
-    { y: 1445, rx: 168, rz: 96, fb: 0.00 },
-    { y: 1465, rx: 120, rz: 80, fb: 0.00 },
-  ],
 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -60,118 +46,82 @@ export function deriveParams(obj) {
   };
 }
 
-/* Dense smooth rings from the control table via Catmull-Rom. */
-function denseRings() {
-  const ctrl = PARAMS.controlRings;
-  const curve = new THREE.CatmullRomCurve3(
-    ctrl.map(r => new THREE.Vector3(r.y, r.rx, r.rz)), false, 'centripetal');
-  const N = PARAMS.ringSamples, rings = [];
-  for (let i = 0; i < N; i++) {
-    const p = curve.getPoint(i / (N - 1));
-    // front-boost lerped from control table
-    let fb = 0;
-    for (let k = 0; k < ctrl.length - 1; k++) {
-      const a = ctrl[k], b = ctrl[k + 1];
-      if (p.x >= a.y && p.x <= b.y) { fb = a.fb + (b.fb - a.fb) * (p.x - a.y) / (b.y - a.y); break; }
-    }
-    rings.push({ y: p.x, rx: p.y, rz: p.z, fb });
-  }
-  return rings;
-}
-
-function superXY(rx, rz, fb, theta) {
-  const p = PARAMS.superP;
-  const c = Math.cos(theta), s = Math.sin(theta);
-  const x = rx * Math.sign(c) * Math.pow(Math.abs(c), p);
-  let z = rz * Math.sign(s) * Math.pow(Math.abs(s), p);
-  z *= 1 + fb * Math.pow(Math.max(0, s), 2); // fuller front at bust
-  return [x, z];
-}
-
-/* Build the torso as one continuous mesh, then sculpt the bust into it. */
-function buildTorso(T, mat) {
-  const rings = denseRings();
-  const SEG = PARAMS.radialSegments, R = rings.length;
-  const pos = new Float32Array(R * SEG * 3);
-  let k = 0;
-  rings.forEach(rg => {
-    for (let j = 0; j < SEG; j++) {
-      const th = (j / SEG) * Math.PI * 2;
-      const [x, z] = superXY(rg.rx, rg.rz, rg.fb, th);
-      pos[k++] = x; pos[k++] = rg.y; pos[k++] = z;
-    }
-  });
-  const idx = [];
-  for (let i = 0; i < R - 1; i++)
-    for (let j = 0; j < SEG; j++) {
-      const a = i * SEG + j, b = i * SEG + (j + 1) % SEG;
-      const c = (i + 1) * SEG + j, d = (i + 1) * SEG + (j + 1) % SEG;
-      idx.push(a, c, b, b, c, d);
-    }
-  // caps
-  const capBase = pos.length / 3;
-  const posArr = Array.from(pos);
-  const addCap = (ring, top) => {
-    const rg = rings[ring], ci = posArr.length / 3;
-    posArr.push(0, rg.y, 0);
-    for (let j = 0; j < SEG; j++) {
-      const a = ring * SEG + j, b = ring * SEG + (j + 1) % SEG;
-      if (top) idx.push(ci, b, a); else idx.push(ci, a, b);
-    }
-  };
-  addCap(0, false); addCap(R - 1, true);
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals(); // base normals -> displacement direction
-  const nrm = geo.attributes.normal.array.slice();
-  const col = new Float32Array((posArr.length / 3) * 3).fill(1);
-
-  sculptBust(geo, nrm, col, T);
-  sculptGlutes(geo, nrm, T);
-
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  geo.computeVertexNormals();
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = true;
-  return mesh;
-}
-
-/* Pure bust displacement profile: offset (mm) at (dx, dy) from the nipple.
- * Positive = outward. Exported for unit testing. */
-export function bustOffset(dx, dy, T) {
-  const R = T.moundW / 2, H = R * PARAMS.projectionFactor, aR = T.areolaD / 2;
-  let off = 0;
+/* Smooth mound falloff only (no areola/nipple/crease detail), 0..1.
+ * Exported so the neutral mesh's own bust can be subtracted with the same shape. */
+export function moundFalloff(dx, dy, T) {
+  const R = T.moundW / 2;
   const rv = dy > 0 ? R * 0.95 : R * 1.30; // teardrop: fuller below nipple
   const d2 = Math.pow(dx / R, 2) + Math.pow(dy / rv, 2);
-  if (d2 < 1) off += H * Math.pow(Math.cos(Math.sqrt(d2) * Math.PI / 2), 1.15);
+  if (d2 >= 1) return 0;
+  return Math.pow(Math.cos(Math.sqrt(d2) * Math.PI / 2), 1.15);
+}
+
+/* Pure bust displacement profile: offset (mm) at (dx, dy) from the apex.
+ * Positive = outward along the surface normal. Exported for unit testing. */
+export function bustOffset(dx, dy, T) {
+  const R = T.moundW / 2, H = R * PARAMS.projectionFactor, aR = T.areolaD / 2;
+  let off = H * moundFalloff(dx, dy, T);
   const da = Math.hypot(dx, dy) / aR;
-  if (da < 1) off += 1.6 * Math.pow(Math.cos(da * Math.PI / 2), 2);
+  if (da < 1) off += 1.6 * Math.pow(Math.cos(da * Math.PI / 2), 2); // areola dome
   const dn = Math.hypot(dx, dy) / 7;
-  if (dn < 2.5) off += 5.0 * Math.exp(-dn * dn);
+  if (dn < 2.5) off += 5.0 * Math.exp(-dn * dn);                    // nipple
   const fdx = dx / (R * 1.05);
   if (Math.abs(fdx) < 1) {
     const dyf = (dy + T.nipUp) / 10; // == y - foldY
-    off -= 2.4 * Math.exp(-dyf * dyf) * Math.pow(Math.cos(fdx * Math.PI / 2), 2);
+    off -= 2.4 * Math.exp(-dyf * dyf) * Math.pow(Math.cos(fdx * Math.PI / 2), 2); // crease
   }
   return off;
 }
 
-/* Sculpt the measured bust into the torso surface. Left mirrored from right. */
-function sculptBust(geo, nrm, col, T) {
-  const p = geo.attributes.position.array;
-  const n = p.length / 3;
+/* Apex detection on neutral-mesh positions (Float32Array, mm, feet at y=0).
+ * Returns [{ side, x, y, z, wallZ, bump }] — bump = apex z minus chest-wall z. */
+export function detectApexes(pos) {
+  const n = pos.length / 3;
+  const out = [];
   for (const s of [1, -1]) {
-    const cx = s * T.nipLat, cy = T.foldY + T.nipUp, aR = T.areolaD / 2;
-    const R = T.moundW / 2;
+    const top = []; // [z, x, y], ascending, capped at 25
     for (let i = 0; i < n; i++) {
-      const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
-      if (z < -20) continue;                    // front only
-      const dx = x - cx, dy = y - cy;
-      if (Math.abs(dx) > R * 1.9) continue;
-      if (Math.abs(dy) > R * 2.2) continue;
-      const off = bustOffset(dx, dy, T);
+      const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+      if (s * x < 25 || s * x > 220 || y < 950 || y > 1450 || z <= 0) continue;
+      if (top.length < 25 || z > top[0][0]) {
+        top.push([z, x, y]);
+        top.sort((a, b) => a[0] - b[0]);
+        if (top.length > 25) top.shift();
+      }
+    }
+    if (!top.length) throw new Error('detectApexes: no apex found on side ' + s);
+    const cx = top.reduce((a, p) => a + p[1], 0) / top.length;
+    const cy = top.reduce((a, p) => a + p[2], 0) / top.length;
+    const cz = top.reduce((a, p) => a + p[0], 0) / top.length;
+    // chest wall: median z of front verts near the centreline at apex height
+    const wall = [];
+    for (let i = 0; i < n; i++) {
+      const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+      if (z > 50 && Math.abs(x - s * 20) < 18 && Math.abs(y - cy) < 18) wall.push(z);
+    }
+    wall.sort((a, b) => a - b);
+    const wallZ = wall[Math.floor(wall.length / 2)];
+    out.push({ side: s, x: cx, y: cy, z: cz, wallZ, bump: cz - wallZ });
+  }
+  return out;
+}
+
+/* Sculpt the measured bust into the neutral mesh.
+ * pos/nrm: Float32Array positions + unit normals (same order). Returns
+ * { pos, colors } — displaced positions and white-based vertex colors with
+ * the subtle areola/nipple tint. Left is mirrored from right by construction
+ * (both sides sculpted from the same T). */
+export function sculptBust(pos, nrm, T, apexes) {
+  const n = pos.length / 3;
+  const out = new Float32Array(pos);
+  const col = new Float32Array(n * 3).fill(1);
+  const R = T.moundW / 2, aR = T.areolaD / 2;
+  for (const A of apexes) {
+    for (let i = 0; i < n; i++) {
+      const dx = pos[i * 3] - A.x, dy = pos[i * 3 + 1] - A.y;
+      if (Math.abs(dx) > R * 1.9 || Math.abs(dy) > R * 2.2) continue;
+      if (nrm[i * 3 + 2] < 0.35) continue; // front-facing chest wall only
+      const off = bustOffset(dx, dy, T) - A.bump * moundFalloff(dx, dy, T);
       // areola + nipple tint (subtle, keeps the mannequin neutral)
       const da = Math.hypot(dx, dy) / aR;
       if (da < 1) {
@@ -188,106 +138,11 @@ function sculptBust(geo, nrm, col, T) {
         col[i * 3 + 2] = col[i * 3 + 2] * (1 - t2) + 0.58 * t2;
       }
       if (off !== 0) {
-        p[i * 3] += nrm[i * 3] * off;
-        p[i * 3 + 1] += nrm[i * 3 + 1] * off;
-        p[i * 3 + 2] += nrm[i * 3 + 2] * off;
+        out[i * 3] += nrm[i * 3] * off;
+        out[i * 3 + 1] += nrm[i * 3 + 1] * off;
+        out[i * 3 + 2] += nrm[i * 3 + 2] * off;
       }
     }
   }
-  geo.attributes.position.needsUpdate = true;
-}
-
-/* Subtle glute shaping so the back isn't a flat column. */
-function sculptGlutes(geo, nrm) {
-  const p = geo.attributes.position.array;
-  const n = p.length / 3;
-  for (const s of [1, -1]) {
-    const bx = s * 88, by = 895;
-    for (let i = 0; i < n; i++) {
-      const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
-      if (z > 0) continue;
-      const d2 = Math.pow((x - bx) / 72, 2) + Math.pow((y - by) / 88, 2);
-      if (d2 < 4) {
-        const off = 13 * Math.exp(-d2 * 1.1);
-        p[i * 3] += nrm[i * 3] * off;
-        p[i * 3 + 1] += nrm[i * 3 + 1] * off;
-        p[i * 3 + 2] += nrm[i * 3 + 2] * off;
-      }
-    }
-  }
-}
-
-/* Tapered limb segment with joint spheres. */
-function segment(group, a, b, rA, rB, mat) {
-  const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b);
-  const dir = new THREE.Vector3().subVectors(vb, va);
-  const len = dir.length();
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(rB, rA, len, 32), mat);
-  m.position.copy(va).addScaledVector(dir, 0.5);
-  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-  m.castShadow = true;
-  group.add(m);
-  for (const [pt, r] of [[va, rA], [vb, rB]]) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(r, 28, 20), mat);
-    s.position.copy(pt);
-    s.castShadow = true;
-    group.add(s);
-  }
-}
-
-function buildBody(T, mat) {
-  const g = new THREE.Group();
-  g.add(buildTorso(T, mat));
-  segment(g, [0, 1440, 0], [0, 1575, 0], 62, 52, mat); // neck
-  const head = new THREE.Mesh(new THREE.SphereGeometry(102, 48, 32), mat);
-  head.geometry.scale(0.94, 1.2, 0.99);
-  head.position.set(0, 1672, 10);
-  head.castShadow = true;
-  g.add(head);
-  for (const s of [1, -1]) {
-    const sh = new THREE.Mesh(new THREE.SphereGeometry(62, 28, 20), mat);
-    sh.position.set(s * 192, 1398, 0);
-    sh.castShadow = true;
-    g.add(sh);
-    segment(g, [s * 196, 1395, 0], [s * 280, 1175, 12], 56, 43, mat);
-    segment(g, [s * 280, 1175, 12], [s * 320, 950, 20], 41, 31, mat);
-    const hand = new THREE.Mesh(new THREE.BoxGeometry(64, 150, 32), mat);
-    hand.position.set(s * 324, 862, 22);
-    hand.rotation.z = s * -0.06;
-    hand.castShadow = true;
-    g.add(hand);
-    segment(g, [s * 92, 860, 0], [s * 98, 470, 6], 88, 62, mat);
-    segment(g, [s * 98, 470, 6], [s * 104, 140, 10], 58, 36, mat);
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(78, 58, 205), mat);
-    foot.position.set(s * 104, 40, 62);
-    foot.castShadow = true;
-    g.add(foot);
-  }
-  return g;
-}
-
-export function triCount(group) {
-  let t = 0;
-  group.traverse(o => { if (o.isMesh && o.geometry.index) t += o.geometry.index.count / 3; });
-  return Math.round(t);
-}
-
-export function buildMannequin(T) {
-  const mat = new THREE.MeshStandardMaterial({
-    color: PARAMS.body, roughness: 0.5, metalness: 0.05, vertexColors: true,
-  });
-  const group = new THREE.Group();
-  group.add(buildBody(T, mat));
-  // vertexColors is on: geometries without a color attribute (limbs, head)
-  // need an explicit white one or they render black.
-  group.traverse(o => {
-    if (o.isMesh && !o.geometry.attributes.color) {
-      const n = o.geometry.attributes.position.count;
-      const white = new Float32Array(n * 3).fill(1);
-      o.geometry.setAttribute('color', new THREE.BufferAttribute(white, 3));
-    }
-  });
-  group.userData.material = mat; // wireframe toggle
-  group.userData.tris = triCount(group);
-  return group;
+  return { pos: out, colors: col };
 }

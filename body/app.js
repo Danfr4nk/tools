@@ -1,7 +1,9 @@
 /* tools/body/app.js — scene, import wiring, view toggle, readout. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { buildMannequin, deriveParams } from './mannequin.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { PARAMS, deriveParams, detectApexes, sculptBust } from './mannequin.js';
 import { renderSchematic } from './schematic.js';
 import { validateBreastTelemetry, SCHEMA } from './validate.js';
 
@@ -64,7 +66,7 @@ const camera = new THREE.PerspectiveCamera(38, 1, 10, 40000);
 camera.position.set(340, 1200, 3000);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 950, 0);
+controls.target.set(0, 1000, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.minDistance = 900;
@@ -109,14 +111,54 @@ function fit() {
 new ResizeObserver(fit).observe(container);
 window.addEventListener('orientationchange', () => setTimeout(fit, 200));
 
+/* ---------------- base mesh + bust sculpt ---------------- */
+// Neutral body, loaded once. Every sculpt starts from these neutral positions
+// so re-imports never stack displacement.
+let baseCache = null;
+async function getBase() {
+  if (baseCache) return baseCache;
+  const group = await new OBJLoader().loadAsync('body-neutral.obj');
+  const g = mergeVertices(group.children[0].geometry); // weld -> indexed -> smooth normals
+  g.computeVertexNormals();
+  baseCache = {
+    pos: g.attributes.position.array.slice(),
+    nrm: g.attributes.normal.array.slice(),
+    idx: g.index.array,
+    apexes: detectApexes(g.attributes.position.array),
+  };
+  return baseCache;
+}
+
 let current = null;
-function setMannequin(T) {
-  if (current) {
-    scene.remove(current);
-    current.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+async function setMannequin(T) {
+  const hint = $('hint3d');
+  try {
+    const base = await getBase();
+    const { pos, colors } = sculptBust(base.pos, base.nrm, T, base.apexes);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setIndex(new THREE.BufferAttribute(base.idx, 1));
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({
+      color: PARAMS.body, roughness: 0.5, metalness: 0.05, vertexColors: true,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    if (current) {
+      scene.remove(current);
+      current.geometry.dispose();
+      current.material.dispose();
+    }
+    current = mesh;
+    current.userData.material = mat;
+    scene.add(current);
+    if (hint) hint.textContent = 'drag to orbit · scroll to zoom';
+    const ml = $('meshLine');
+    if (ml) ml.textContent = 'mesh: ' + (geo.index.count / 3000).toFixed(1) + 'k triangles · one continuous surface · CC0 base';
+  } catch (e) {
+    if (hint) hint.textContent = 'could not load body-neutral.obj: ' + e.message;
   }
-  current = buildMannequin(T);
-  scene.add(current);
 }
 
 renderer.setAnimationLoop(() => {
@@ -129,7 +171,7 @@ let lastObj = null;
 
 function renderAll(obj, T) {
   lastObj = obj;
-  setMannequin(T);
+  setMannequin(T); // async — 3D pops in when the mesh is ready
   $('view2d').innerHTML = renderSchematic(T, obj);
   const ph = obj.modeled_physical, cf = obj.confidence || {};
   const rows = [
@@ -151,9 +193,8 @@ function renderAll(obj, T) {
     h += '<p class="warn">' + T.notes.map(esc).join('<br>') + '</p>';
   h += '<p class="note">source: ' + esc(obj.source) + ' · left side mirrored from right</p>';
   h += '<p class="note"><span class="dot" style="background:#7ee2a8"></span> measured — nipple offset/height, areola Ø, mound width' +
-    '<br><span class="dot" style="background:#ffd479"></span> modeled — apex projection, body proportions, left mirror</p>';
-  if (current && current.userData.tris)
-    h += '<p class="note">mesh: ' + (current.userData.tris / 1000).toFixed(1) + 'k triangles · one continuous surface</p>';
+    '<br><span class="dot" style="background:#ffd479"></span> modeled — apex projection, bust position, left mirror</p>';
+  h += '<p class="note" id="meshLine">mesh: loading…</p>';
   $('readout').innerHTML = h;
   fit();
 }
