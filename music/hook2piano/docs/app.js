@@ -152,6 +152,7 @@ function renderChips() {
 
 async function selectSection(i) {
   const s = sections[i];
+  if (window.H2P && H2P.player) H2P.player.stop();
   [...chipsEl.children].forEach((b, j) => b.classList.toggle("active", j === i));
   setStatus("rendering " + s.name + "\u2026");
   try {
@@ -159,6 +160,8 @@ async function selectSection(i) {
     const song = await buildSong(s.name, project);
     window.H2P.renderSong(song, scoreEl);
     actionsEl.style.display = "flex";
+    $("transport").style.display = "flex";
+    if (window.H2P.player) H2P.player.reset();
     setStatus("");
   } catch (e) {
     setStatus("error: " + e.message);
@@ -172,6 +175,8 @@ async function onLoad() {
   chipsEl.innerHTML = "";
   scoreEl.innerHTML = "";
   actionsEl.style.display = "none";
+  $("transport").style.display = "none";
+  if (window.H2P && H2P.player) H2P.player.reset();
   try {
     if (parsed.kind === "tab") {
       sections = [{ name: "Tab", tid: parsed.tid }];
@@ -194,6 +199,8 @@ async function onLoad() {
 $("load").onclick = onLoad;
 $("url").addEventListener("keydown", e => { if (e.key === "Enter") onLoad(); });
 $("print").onclick = () => window.print();
+$("tplay").onclick = () => { if (window.H2P && H2P.player) H2P.player.toggle(); };
+$("tstop").onclick = () => { if (window.H2P && H2P.player) H2P.player.stop(); };
 
 /* ---------- ?tabs= deep link (bookmarklet target) ----------
  * Format: ?tabs=<enc(name)>:<id>,<enc(name)>:<id>  (or bare ids: ?tabs=id1,id2)

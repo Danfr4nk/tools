@@ -68,6 +68,7 @@ _PAGE = """<!DOCTYPE html>
    each roll. Pure SVG, zero dependencies. */
 window.H2P = window.H2P || {};
 var W = 1020, KB = 64, PPB = 44, ROWH = 9;
+window.H2P.PPB = PPB; window.H2P.KB = KB;   // layout constants the player needs
 var NUMH = 14, ABOVEH = 20, BELOWH = 20;   // label rows per roll
 var GRID_TOP = NUMH + ABOVEH;              // y where the grid starts
 var BLACK = {1:1, 3:1, 6:1, 8:1, 10:1};
@@ -87,15 +88,18 @@ function vfName(pair){ // ["g/3",""] -> "G3"; ["b/2","b"] -> "Bb2"
 // One piano roll SVG. mode: "melody" | "chords".
 // measures: chunk of section measures; idx0: global measure index of chunk[0].
 // lo/hi: section pitch range (shared so both rolls align).
-function rollSVG(sec, measures, idx0, lo, hi, mode){
+// t0: song time in seconds where this system starts (for the playhead).
+function rollSVG(sec, measures, idx0, lo, hi, mode, t0){
   var bpm = sec.beatsPerMeasure, mps = measures.length;
   var measW = bpm * PPB, gridW = mps * measW;
   var nRows = hi - lo + 1, gridH = nRows * ROWH;
   var H = GRID_TOP + gridH + BELOWH;
   var gx = KB, gy = GRID_TOP;
+  var t1 = t0 + mps * bpm * 60 / sec.bpm;
   var isMel = (mode === "melody");
   var fill = isMel ? MEL_FILL : CHD_FILL;
-  var s = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" ' +
+  var s = '<svg class="h2p-roll" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" ' +
+          'data-t0="' + t0.toFixed(3) + '" data-t1="' + t1.toFixed(3) + '" data-bpm="' + sec.bpm + '" ' +
           'style="max-width:100%;height:auto;display:block;background:#fff" ' +
           'xmlns="http://www.w3.org/2000/svg">';
   var m, y, isBlack, k, b, x0;
@@ -163,12 +167,17 @@ function rollSVG(sec, measures, idx0, lo, hi, mode){
       });
     }
   });
+  // playhead line, parked off-canvas until the player moves it
+  s += '<line class="h2p-ph" x1="-20" y1="' + gy + '" x2="-20" y2="' + (gy + gridH) + '" ' +
+       'stroke="#d62728" stroke-width="2" style="display:none"/>';
   s += '</svg>';
   return s;
 }
 
 window.H2P.renderSong = function(SONG, mountEl){
+  window.H2P.lastSong = SONG;   // the player reads this
   var html = '';
+  var songT = 0;                // seconds elapsed before the current section
   SONG.sections.forEach(function(sec){
     var lo = 127, hi = 0;
     sec.measures.forEach(function(m){
@@ -199,12 +208,14 @@ window.H2P.renderSong = function(SONG, mountEl){
     for(var si = 0; si < systems; si++){
       var chunk = sec.measures.slice(si * mps, si * mps + mps);
       if(!chunk.length) break;
+      var sysT0 = songT + si * mps * sec.beatsPerMeasure * 60 / sec.bpm;
       html += '<div class="rolltitle mel">MELODY <span>right hand</span></div>';
-      html += rollSVG(sec, chunk, si * mps, lo, hi, "melody");
+      html += rollSVG(sec, chunk, si * mps, lo, hi, "melody", sysT0);
       html += '<div class="rolltitle chd">CHORDS <span>left hand</span></div>';
-      html += rollSVG(sec, chunk, si * mps, lo, hi, "chords");
+      html += rollSVG(sec, chunk, si * mps, lo, hi, "chords", sysT0);
     }
     html += '</div>';
+    songT += sec.measures.length * sec.beatsPerMeasure * 60 / sec.bpm;
   });
   mountEl.innerHTML = html;
 };
