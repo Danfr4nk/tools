@@ -1,22 +1,19 @@
-"""Render sections as a printable one-page-per-section piano score.
+"""Render sections as printable piano-roll pages.
 
-Uses a vendored VexFlow build (vendor/vexflow.js, inlined so the output HTML
-is fully self-contained). Grand staff per system: RH melody on treble,
-LH chord voicings on bass, chord symbols annotated above.
+No staff notation: two piano rolls per section (melody = right hand,
+chords = left hand) with note names above and below each roll.
+The output HTML is fully self-contained (inline SVG, no JS dependencies).
 """
 
 import json
-import os
 
 from .parse import split_measures
 from .theory import key_signature
 
-_VENDOR = os.path.join(os.path.dirname(__file__), "..", "vendor", "vexflow.js")
-
 
 def sections_to_js(sections):
     """Convert parsed Sections to the JSON-serializable SONG structure the
-    VexFlow renderer consumes. Shared by the CLI and the web harness
+    piano-roll renderer consumes. Shared by the CLI and the web harness
     (which calls this from Pyodide)."""
     js_sections = []
     for s in sections:
@@ -31,12 +28,9 @@ def sections_to_js(sections):
 
 
 def render(sections):
-    with open(_VENDOR) as f:
-        vexflow = f.read()
-
     data = json.dumps(sections_to_js(sections))
 
-    return _PAGE.replace("__VEXFLOW__", vexflow).replace("__DATA__", data)
+    return _PAGE.replace("__DATA__", data)
 
 
 _PAGE = """<!DOCTYPE html>
@@ -49,6 +43,10 @@ _PAGE = """<!DOCTYPE html>
   h1 { font-size: 22px; margin: 0 0 2px; }
   h2 { font-size: 15px; font-weight: normal; margin: 0 0 10px; color: #444; }
   .prog { font-size: 12px; color: #555; margin: 0 0 8px; }
+  .rolltitle { font-size: 13px; font-weight: bold; letter-spacing: 2px; margin: 16px 0 4px; }
+  .rolltitle.mel { color: #2b6cb0; }
+  .rolltitle.chd { color: #2f855a; }
+  .rolltitle span { font-weight: normal; letter-spacing: 0; color: #777; font-size: 12px; }
   @media print {
     body { padding: 0; }
     .noprint { display: none; }
@@ -56,178 +54,161 @@ _PAGE = """<!DOCTYPE html>
 </style>
 </head><body>
 <div class="noprint" style="margin-bottom:10px;font-size:13px;color:#666">
-  hook2piano &mdash; print this page (or save as PDF) for the one-page piano sheet.
-  Treble = right hand melody, Bass = left hand chords, chord symbols on top.
+  hook2piano &mdash; print this page (or save as PDF) for the piano-roll sheet.
+  Blue = melody (right hand), green = chord tones (left hand).
+  Note names sit above and below each roll.
 </div>
 <div id="score"></div>
-<script>__VEXFLOW__</script>
 <script>const SONG = __DATA__;</script>
 <script>
 (function(){
 "use strict";
-const VF = (window.Vex && window.Vex.Flow) || window.Vex;
-const W = 1020, SYS_H = 200, TOP = 46;
+/* Piano-roll renderer — no staff notation. Two rolls per section: MELODY
+   (right hand) and CHORDS (left hand), with note names above AND below
+   each roll. Pure SVG, zero dependencies. */
+window.H2P = window.H2P || {};
+var W = 1020, KB = 64, PPB = 44, ROWH = 9;
+var NUMH = 14, ABOVEH = 20, BELOWH = 20;   // label rows per roll
+var GRID_TOP = NUMH + ABOVEH;              // y where the grid starts
+var BLACK = {1:1, 3:1, 6:1, 8:1, 10:1};
+var PC_SHARP = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+var MEL_FILL = "#2b6cb0", CHD_FILL = "#2f855a";
 
-// ---- data helpers ----
-function decompose(beats){
-  const vals = [[4,"w"],[2,"h"],[1,"q"],[0.5,"8"],[0.25,"16"],[0.125,"32"]];
-  let rem = Math.round(beats*1e6)/1e6;
-  const out = [];
-  while(rem > 1e-6){
-    let placed = false;
-    for(const [v,n] of vals){
-      for(const dots of [2,1,0]){
-        const want = v*(2-Math.pow(0.5,dots));
-        if(want <= rem+1e-6){ out.push([n,dots]); rem = Math.round((rem-want)*1e6)/1e6; placed = true; break; }
-      }
-      if(placed) break;
+function esc(s){
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+                  .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function midiName(m){ return PC_SHARP[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
+function vfName(pair){ // ["g/3",""] -> "G3"; ["b/2","b"] -> "Bb2"
+  var parts = String(pair[0]).split("/");
+  return parts[0].toUpperCase() + (pair[1] || "") + parts[1];
+}
+
+// One piano roll SVG. mode: "melody" | "chords".
+// measures: chunk of section measures; idx0: global measure index of chunk[0].
+// lo/hi: section pitch range (shared so both rolls align).
+function rollSVG(sec, measures, idx0, lo, hi, mode){
+  var bpm = sec.beatsPerMeasure, mps = measures.length;
+  var measW = bpm * PPB, gridW = mps * measW;
+  var nRows = hi - lo + 1, gridH = nRows * ROWH;
+  var H = GRID_TOP + gridH + BELOWH;
+  var gx = KB, gy = GRID_TOP;
+  var isMel = (mode === "melody");
+  var fill = isMel ? MEL_FILL : CHD_FILL;
+  var s = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" ' +
+          'style="max-width:100%;height:auto;display:block;background:#fff" ' +
+          'xmlns="http://www.w3.org/2000/svg">';
+  var m, y, isBlack, k, b, x0;
+  // grid rows + keyboard, top pitch first
+  for(m = hi; m >= lo; m--){
+    y = gy + (hi - m) * ROWH;
+    isBlack = BLACK[((m % 12) + 12) % 12] === 1;
+    s += '<rect x="' + gx + '" y="' + y + '" width="' + gridW + '" height="' + ROWH + '" ' +
+         'fill="' + (isBlack ? "#f2f2f2" : "#ffffff") + '" stroke="#e6e6e6" stroke-width="0.5"/>';
+    s += '<rect x="0" y="' + y + '" width="' + (isBlack ? Math.round(KB * 0.62) : KB) + '" ' +
+         'height="' + ROWH + '" fill="' + (isBlack ? "#2b2b2b" : "#ffffff") + '" ' +
+         'stroke="#b5b5b5" stroke-width="0.5"/>';
+  }
+  // barlines, beat lines, bar numbers
+  for(k = 0; k < mps; k++){
+    x0 = gx + k * measW;
+    s += '<line x1="' + x0 + '" y1="' + gy + '" x2="' + x0 + '" y2="' + (gy + gridH) + '" stroke="#8a8a8a" stroke-width="1.2"/>';
+    for(b = 1; b < bpm; b++){
+      var xb = x0 + b * PPB;
+      s += '<line x1="' + xb + '" y1="' + gy + '" x2="' + xb + '" y2="' + (gy + gridH) + '" stroke="#dedede" stroke-width="0.5"/>';
     }
-    if(!placed){ out.push(["32",0]); rem = 0; }
+    s += '<text x="' + (x0 + 5) + '" y="' + (NUMH - 4) + '" font-family="Georgia,serif" font-size="9" fill="#999">' + (idx0 + k + 1) + '</text>';
   }
-  return out;
-}
-function vfDur(base, dots, isRest){
-  return base + (isRest ? "r" : "") + (dots ? "d".repeat(dots) : "");
-}
+  var xEnd = gx + gridW;
+  s += '<line x1="' + xEnd + '" y1="' + gy + '" x2="' + xEnd + '" y2="' + (gy + gridH) + '" stroke="#8a8a8a" stroke-width="1.2"/>';
 
-// Build StaveNotes for one event; returns {notes, ties}.
-// ev = {dur, keys:[{key,acc}...] | null for rest}
-function eventNotes(ev, clef){
-  const parts = decompose(ev.dur);
-  const notes = parts.map(([base, dots]) => {
-    const isRest = !ev.keys;
-    const sn = new VF.StaveNote({
-      clef: clef,
-      keys: isRest ? [(clef === "treble" ? "b/4" : "d/3")] : ev.keys.map(k => k.key),
-      duration: vfDur(base, dots, isRest),
-      auto_stem: true
-    });
-    if(!isRest) ev.keys.forEach((k, i) => { if(k.acc) sn.addModifier(new VF.Accidental(k.acc), i); });
-    for(let d = 0; d < dots; d++) VF.Dot.buildAndAttach([sn], {all_voices: false});
-    return sn;
-  });
-  const ties = [];
-  for(let i = 0; i + 1 < notes.length; i++){
-    const nKeys = notes[i].getKeys().length;
-    ties.push(new VF.StaveTie({
-      first_note: notes[i], last_note: notes[i+1],
-      first_indexes: [...Array(nKeys).keys()],
-      last_indexes: [...Array(nKeys).keys()]
-    }));
+  // note-name labels, above AND below the roll; crowded labels are skipped
+  var lastX = -1e9;
+  function nameLabel(cx, txt, big){
+    cx = Math.round(cx * 10) / 10;
+    if(cx - lastX < 30) return;
+    lastX = cx;
+    var st = 'text-anchor="middle" font-family="Georgia,serif" font-size="' + (big ? 11 : 10) + '" ' +
+             'fill="' + (big ? "#161616" : "#3d3d3d") + '"' + (big ? ' font-weight="bold"' : '');
+    var ya = NUMH + ABOVEH - 6, yb = gy + gridH + 15;
+    s += '<text x="' + cx + '" y="' + ya + '" ' + st + '>' + esc(txt) + '</text>';
+    s += '<text x="' + cx + '" y="' + yb + '" ' + st + '>' + esc(txt) + '</text>';
   }
-  return {notes, ties};
-}
-
-// Fill a full measure: events = [{beat, dur, keys|null}], returns {notes, ties, starts}
-// starts: [{beat, index}] first StaveNote index of each non-rest event
-function fillMeasure(events, clef, totalBeats){
-  const notes = [], ties = [], starts = [];
-  let cursor = 0;
-  const sorted = [...events].sort((a,b) => a.beat - b.beat);
-  for(const ev of sorted){
-    if(ev.beat > cursor + 1e-6){
-      const r = eventNotes({dur: ev.beat - cursor, keys: null}, clef);
-      notes.push(...r.notes); ties.push(...r.ties);
-      cursor = ev.beat;
+  function bar(x, w, midi, inner){
+    var bx = Math.round((x + 1) * 10) / 10, bw = Math.max(2, Math.round((w - 2) * 10) / 10);
+    var by = gy + (hi - midi) * ROWH + 1;
+    s += '<rect x="' + bx + '" y="' + by + '" width="' + bw + '" height="' + (ROWH - 2) + '" rx="2.5" fill="' + fill + '"/>';
+    if(inner && bw > 30){
+      s += '<text x="' + Math.round((bx + bw / 2) * 10) / 10 + '" y="' + (by + ROWH / 2 + 2.5) + '" ' +
+           'text-anchor="middle" font-family="Georgia,serif" font-size="7.5" fill="#fff">' + esc(inner) + '</text>';
     }
-    const r = eventNotes(ev, clef);
-    if(ev.keys) starts.push({beat: ev.beat, index: notes.length, label: ev.label, roman: ev.roman});
-    notes.push(...r.notes); ties.push(...r.ties);
-    cursor = ev.beat + ev.dur;
   }
-  if(cursor < totalBeats - 1e-6){
-    const r = eventNotes({dur: totalBeats - cursor, keys: null}, clef);
-    notes.push(...r.notes); ties.push(...r.ties);
-  }
-  return {notes, ties, starts};
-}
-
-function annotateChordSymbols(tStarts, bStarts, tNotes, bNotes, chords){
-  chords.forEach(c => {
-    const text = c.label + (c.roman ? " (" + c.roman + ")" : "");
-    const ann = new VF.Annotation(text);
-    ann.setFont("Georgia", 11, "bold");
-    ann.setVerticalJustification(VF.AnnotationVerticalJustify.TOP);
-    const hit = tStarts.find(s => Math.abs(s.beat - c.beat) < 1e-6);
-    if(hit && tNotes[hit.index]){ tNotes[hit.index].addModifier(ann, 0); return; }
-    const bhit = bStarts.find(s => Math.abs(s.beat - c.beat) < 1e-6);
-    if(bhit && bNotes[bhit.index]) bNotes[bhit.index].addModifier(ann, 0);
+  measures.forEach(function(mm, kk){
+    var off = kk * bpm;
+    if(isMel){
+      mm.notes.forEach(function(n){
+        if(n.midi == null) return;
+        var x = gx + (off + n.beat) * PPB, w = n.dur * PPB;
+        bar(x, w, n.midi, null);
+        nameLabel(x + w / 2, n.name || midiName(n.midi), false);
+      });
+    } else {
+      mm.chords.forEach(function(c){
+        var x = gx + (off + c.beat) * PPB, w = c.dur * PPB;
+        (c.midis || []).forEach(function(tm, ti){
+          var nm = (c.vfkeys && c.vfkeys[ti]) ? vfName(c.vfkeys[ti]) : midiName(tm);
+          bar(x, w, tm, nm);
+        });
+        nameLabel(x + w / 2, c.label, true);
+      });
+    }
   });
+  s += '</svg>';
+  return s;
 }
 
-const root = document.getElementById("score");
-SONG.sections.forEach(sec => {
-  const div = document.createElement("div");
-  div.className = "section";
-  const prog = [...new Set(sec.measures.flatMap(m => m.chords.map(c => c.label)))].join(" \u2013 ");
-  div.innerHTML =
-    "<h1>" + sec.title + ' <span style="font-weight:normal;font-size:16px">&mdash; ' + sec.name + "</span></h1>" +
-    "<h2>Key of " + sec.keyName + " &nbsp;|&nbsp; " + sec.bpm + " BPM &nbsp;|&nbsp; " + sec.beatsPerMeasure + "/4</h2>" +
-    '<div class="prog">Progression: ' + prog + "</div>";
-  root.appendChild(div);
-
-  const totalM = sec.measures.length;
-  const systems = Math.min(5, Math.max(1, Math.ceil(totalM / 5)));
-  const mps = Math.ceil(totalM / systems);
-  const renderer = new VF.Renderer(div, VF.Renderer.Backends.SVG);
-  renderer.resize(W, TOP + systems * SYS_H + 20);
-  const ctx = renderer.getContext();
-
-  for(let s = 0; s < systems; s++){
-    const midx = [];
-    for(let i = 0; i < mps && s * mps + i < totalM; i++) midx.push(s * mps + i);
-    const y = TOP + s * SYS_H;
-    const mw = (W - 20) / midx.length;
-    midx.forEach((mi, k) => {
-      const m = sec.measures[mi];
-      const x = 10 + k * mw;
-      const ts = new VF.Stave(x, y, mw);
-      const bs = new VF.Stave(x, y + 100, mw);
-      if(k === 0){
-        ts.addClef("treble").addKeySignature(sec.keySig).addTimeSignature(sec.beatsPerMeasure + "/4");
-        bs.addClef("bass").addKeySignature(sec.keySig).addTimeSignature(sec.beatsPerMeasure + "/4");
-        const brace = new VF.StaveConnector(ts, bs);
-        brace.setType(VF.StaveConnector.type.BRACE); brace.setContext(ctx).draw();
-        const line = new VF.StaveConnector(ts, bs);
-        line.setType(VF.StaveConnector.type.SINGLE_LEFT); line.setContext(ctx).draw();
-      }
-      ts.setContext(ctx).draw();
-      bs.setContext(ctx).draw();
-      ctx.save();
-      ctx.setFont("Georgia", 9, "");
-      ctx.fillStyle = "#999";
-      ctx.fillText(String(mi + 1), x + 5, y - 10);
-      ctx.restore();
-
-      const trebleEvents = m.notes.map(n => ({
-        beat: n.beat, dur: n.dur,
-        keys: n.midi == null ? null : [{key: n.key, acc: n.acc}]
-      }));
-      const bassEvents = m.chords.map(c => ({
-        beat: c.beat, dur: c.dur, label: c.label, roman: c.roman,
-        keys: c.vfkeys.map(([key, acc]) => ({key, acc}))
-      }));
-
-      const t = fillMeasure(trebleEvents, "treble", sec.beatsPerMeasure);
-      const b = fillMeasure(bassEvents, "bass", sec.beatsPerMeasure);
-      annotateChordSymbols(t.starts, b.starts, t.notes, b.notes, m.chords);
-
-      const tv = new VF.Voice({num_beats: sec.beatsPerMeasure, beat_value: 4}).setStrict(false);
-      const bv = new VF.Voice({num_beats: sec.beatsPerMeasure, beat_value: 4}).setStrict(false);
-      tv.addTickables(t.notes);
-      bv.addTickables(b.notes);
-      new VF.Formatter().joinVoices([tv]).joinVoices([bv]).format([tv, bv], mw - 80);
-      tv.draw(ctx, ts);
-      bv.draw(ctx, bs);
-      t.ties.forEach(tie => tie.setContext(ctx).draw());
-      b.ties.forEach(tie => tie.setContext(ctx).draw());
-      try {
-        VF.Beam.generateBeams(t.notes, {groups: [new VF.Fraction(1, 4)]})
-          .forEach(bm => bm.setContext(ctx).draw());
-      } catch(e) { /* unbeamed fallback is fine */ }
+window.H2P.renderSong = function(SONG, mountEl){
+  var html = '';
+  SONG.sections.forEach(function(sec){
+    var lo = 127, hi = 0;
+    sec.measures.forEach(function(m){
+      m.notes.forEach(function(n){
+        if(n.midi != null){ if(n.midi < lo) lo = n.midi; if(n.midi > hi) hi = n.midi; }
+      });
+      m.chords.forEach(function(c){
+        (c.midis || []).forEach(function(tm){
+          if(tm < lo) lo = tm; if(tm > hi) hi = tm;
+        });
+      });
     });
-  }
-});
+    if(hi < lo){ lo = 60; hi = 72; }
+    lo = Math.max(0, lo - 2); hi = Math.min(127, hi + 2);
+
+    var seen = {}, prog = [];
+    sec.measures.forEach(function(m){
+      m.chords.forEach(function(c){ if(!seen[c.label]){ seen[c.label] = 1; prog.push(c.label); } });
+    });
+    html += '<div class="section">' +
+      '<h1>' + esc(sec.title) + ' <span style="font-weight:normal;font-size:16px">&mdash; ' + esc(sec.name) + '</span></h1>' +
+      '<h2>Key of ' + esc(sec.keyName) + ' &nbsp;|&nbsp; ' + sec.bpm + ' BPM &nbsp;|&nbsp; ' + sec.beatsPerMeasure + '/4</h2>' +
+      '<div class="prog">Progression: ' + esc(prog.join(" \\u2013 ")) + '</div>';
+
+    var totalM = sec.measures.length;
+    var systems = Math.min(5, Math.max(1, Math.ceil(totalM / 5)));
+    var mps = Math.ceil(totalM / systems);
+    for(var si = 0; si < systems; si++){
+      var chunk = sec.measures.slice(si * mps, si * mps + mps);
+      if(!chunk.length) break;
+      html += '<div class="rolltitle mel">MELODY <span>right hand</span></div>';
+      html += rollSVG(sec, chunk, si * mps, lo, hi, "melody");
+      html += '<div class="rolltitle chd">CHORDS <span>left hand</span></div>';
+      html += rollSVG(sec, chunk, si * mps, lo, hi, "chords");
+    }
+    html += '</div>';
+  });
+  mountEl.innerHTML = html;
+};
+window.H2P.renderSong(SONG, document.getElementById("score"));
 })();
 </script>
 </body></html>

@@ -2,7 +2,7 @@
 /* hook2piano web harness.
  * Flow: TheoryTab URL (or tab ID) -> section list -> Hooktheory project JSON
  * (direct fetch; api.hooktheory.com allows CORS *) -> hook2piano Python engine
- * running in Pyodide -> SONG structure -> VexFlow renderer (render.js).
+ * running in Pyodide -> SONG structure -> piano-roll renderer (render.js).
  */
 
 const API = "https://api.hooktheory.com/v1/songs/public/";
