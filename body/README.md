@@ -12,13 +12,20 @@ Live: https://danfr4nk.github.io/tools/body/
 - `app.js` — Three.js scene (studio lighting, soft shadows, autorotate),
   import wiring, view toggle, readout table
 - `mannequin.js` — parametric body. Units are millimetres. `PARAMS` at the top
-  holds every proportion (torso loft rings, fold height, materials).
-  - body: standard-proportion female mannequin — lofted elliptical torso,
-    capsule limbs, relaxed A-pose
-  - bust: driven by `deriveParams()` from the JSON — nipple lateral offset and
-    height above fold (from px deltas × mm/px), areola diameter and mound
-    width (absolute mm), fold crease tube, cleavage implied by the gap
-  - left breast mirrored from right (the JSON only resolves the right side)
+  holds every proportion (control rings, fold height, projection factor).
+  - body: generic anonymized female mannequin — dense Catmull-Rom loft
+    (80 rings × 176 segments, ~54k tris total), superellipse cross-sections
+    with bust front-boost, capsule limbs, relaxed A-pose. No textures, no
+    identity — disconnected from any real person by construction.
+  - bust: the JSON regenerates ONLY this area, sculpted directly into the
+    torso surface (one continuous mesh, no intersecting parts) — nipple
+    lateral offset + height above fold (px deltas × mm/px), areola diameter
+    and mound width (absolute mm), teardrop falloff, inframammary crease,
+    subtle areola/nipple tint in vertex colors. Left mirrored from right.
+  - measured vs modeled is labeled in the readout: apex projection
+    (0.45 × mound half-width), body proportions, and the left mirror are
+    modeled, everything else measured.
+  - `bustOffset(dx, dy, T)` is the pure displacement profile (unit-tested).
 - `schematic.js` — 2D front-view SVG, 1 unit = 1 mm, origin at fold × cleavage,
   with dimension lines for areola Ø, mound width, nipple→fold
 - `validate.js` — `breast_telemetry/v1` schema + validator (mirrors

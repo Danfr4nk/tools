@@ -150,6 +150,10 @@ function renderAll(obj, T) {
   if (T.notes.length)
     h += '<p class="warn">' + T.notes.map(esc).join('<br>') + '</p>';
   h += '<p class="note">source: ' + esc(obj.source) + ' · left side mirrored from right</p>';
+  h += '<p class="note"><span class="dot" style="background:#7ee2a8"></span> measured — nipple offset/height, areola Ø, mound width' +
+    '<br><span class="dot" style="background:#ffd479"></span> modeled — apex projection, body proportions, left mirror</p>';
+  if (current && current.userData.tris)
+    h += '<p class="note">mesh: ' + (current.userData.tris / 1000).toFixed(1) + 'k triangles · one continuous surface</p>';
   $('readout').innerHTML = h;
   fit();
 }
@@ -206,5 +210,12 @@ $('tab2d').onclick = () => {
 };
 
 /* ---------------- boot ---------------- */
+$('wireToggle').onclick = () => {
+  if (!current) return;
+  const m = current.userData.material;
+  m.wireframe = !m.wireframe;
+  $('wireToggle').classList.toggle('on', m.wireframe);
+  $('wireToggle').textContent = m.wireframe ? 'wireframe: on' : 'wireframe';
+};
 renderAll(SAMPLE, deriveParams(SAMPLE));
 fit();

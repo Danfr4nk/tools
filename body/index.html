@@ -34,6 +34,8 @@
   .rtable td { padding:7px 4px; border-top:1px solid #232833; vertical-align:top; }
   .rtable td.dim { color:#9aa0ad; font-size:12.5px; text-align:right; white-space:nowrap; }
   .note { color:#9aa0ad; font-size:12.5px; margin:10px 0 0; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  #wireToggle.on { border-color:#7dd3fc; background:#16202e; }
   footer { color:#5b6270; font-size:12px; margin-top:26px; text-align:center; }
   footer a { color:#61afef; }
 </style>
@@ -66,6 +68,9 @@
 
   <section class="card" id="view3dWrap">
     <div id="view3d"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="wireToggle" type="button">wireframe</button>
+    </div>
     <p class="hint">drag to orbit · scroll / pinch to zoom · auto-rotates until you grab it</p>
   </section>
 
