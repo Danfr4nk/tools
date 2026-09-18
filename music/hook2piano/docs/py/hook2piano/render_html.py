@@ -334,15 +334,31 @@ function rollSVG(sec, measures, idx0, used, mode, t0){
           'style="max-width:100%;height:auto;display:block;background:#fff" ' +
           'xmlns="http://www.w3.org/2000/svg">';
   var m, y, isBlack, k, b, x0;
-  // grid rows + keyboard, top pitch first (only pitches that sound)
+  // grid rows, top pitch first (only pitches that sound)
   for(m = 0; m < used.length; m++){
     y = gy + m * C_ROWH;
     isBlack = BLACK[pc(used[m])] === 1;
     s += '<rect x="' + gx + '" y="' + y + '" width="' + gridW + '" height="' + C_ROWH + '" ' +
          'fill="' + (isBlack ? "#f2f2f2" : "#ffffff") + '" stroke="#e6e6e6" stroke-width="0.5"/>';
-    s += '<rect x="0" y="' + y + '" width="' + (isBlack ? Math.round(KB * 0.62) : KB) + '" ' +
-         'height="' + C_ROWH + '" fill="' + (isBlack ? "#2b2b2b" : "#ffffff") + '" ' +
-         'stroke="#b5b5b5" stroke-width="0.5"/>';
+  }
+  // keyboard strip: a COMPLETE piano keyboard fitted to the grid height,
+  // so the black keys are all there; pitches that sound are lit.
+  var kbLo = used[used.length - 1], kbHi = used[0], usedSet = {}, km, wi;
+  used.forEach(function(m){ usedSet[m] = 1; });
+  var whites = [];
+  for(km = kbLo; km <= kbHi; km++) if(!BLACK[pc(km)]) whites.push(km);
+  var wh = gridH / Math.max(1, whites.length), wIndex = {};
+  var hlW = isMel ? "#d3e2f2" : "#d2e8d8", hlB = isMel ? "#2b6cb0" : "#2f855a";
+  whites.forEach(function(m, i){
+    wIndex[m] = i;
+    s += '<rect x="0" y="' + (gy + i * wh).toFixed(1) + '" width="' + KB + '" height="' + (wh + 0.6).toFixed(1) + '" ' +
+         'fill="' + (usedSet[m] ? hlW : "#ffffff") + '" stroke="#b5b5b5" stroke-width="0.5"/>';
+  });
+  for(km = kbLo; km <= kbHi; km++){
+    if(!BLACK[pc(km)] || !(km - 1 in wIndex)) continue;
+    var cy = gy + (wIndex[km - 1] + 1) * wh, bh = wh * 0.64;
+    s += '<rect x="0" y="' + (cy - bh / 2).toFixed(1) + '" width="' + Math.round(KB * 0.62) + '" height="' + bh.toFixed(1) + '" ' +
+         'fill="' + (usedSet[km] ? hlB : "#2b2b2b") + '" stroke="#555" stroke-width="0.5"/>';
   }
   // barlines, beat lines, bar numbers
   for(k = 0; k < mps; k++){
