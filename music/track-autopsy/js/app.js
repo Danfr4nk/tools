@@ -123,9 +123,9 @@ function renderPlay(){
     <div class="machineread">${t.machine ? machineChips(t.machine) : (t.machineTried ? `<span class="hint">no machine read for this track</span>` : `<span class="hint">reading…</span>`)}</div>
     <div class="q">TRIAGE</div>
     <div class="triage">
-      <button class="sbtn ${t.status==="skip"?"on-skip":""}" data-tri="skip">skip</button>
-      <button class="sbtn ${t.status==="like"?"on-like":""}" data-tri="like">like</button>
-      <button class="sbtn ${t.status==="keep"?"on-keep":""}" data-tri="keep">★ added</button>
+      <button class="sbtn ${t.status==="skip"?"on-skip":""}" data-tri="skip" title="hate it">HATE</button>
+      <button class="sbtn ${t.status==="like"?"on-like":""}" data-tri="like" title="alright, not playlist-worthy — saved for stats">LIKE</button>
+      <button class="sbtn ${t.status==="keep"?"on-keep":""}" data-tri="keep" title="love it, want to hear it again">PLAYLIST</button>
     </div>
     <div class="q">SCORE</div>
     <div class="sliderow">

@@ -178,7 +178,7 @@ function avgScoreLine(w){
   const ak = avg(k), ar = avg(r);
   if(ak==null && ar==null) return "";
   const f = x => x==null ? "—" : x.toFixed(1);
-  return `<div class="hint">avg my-score — added: <span class="mono" style="color:var(--keep)">${f(ak)}</span> · not added: <span class="mono">${f(ar)}</span></div>`;
+  return `<div class="hint">avg my-score — playlist: <span class="mono" style="color:var(--keep)">${f(ak)}</span> · the rest: <span class="mono">${f(ar)}</span></div>`;
 }
 function renderWeek(){
   const w = week();
@@ -192,7 +192,7 @@ function renderWeek(){
         ? `<span class="badge locked">🔒 locked ${esc(w.lockedAt||"")}</span>`
         : `<span class="badge unlocked">predictions unlocked</span>`}
     </div>
-    <div class="sub">${w.tracks.length} tracks · type your score 1.00–10.00 · <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">1</span> skip · <span class="kbd">2</span> like · <span class="kbd">3</span> added · <span class="kbd">p</span> player</div>`;
+    <div class="sub">${w.tracks.length} tracks · type your score 1.00–10.00 · <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">1</span> hate · <span class="kbd">2</span> like · <span class="kbd">3</span> playlist · <span class="kbd">p</span> player</div>`;
 
   h += `<div id="scorebar"><div class="row spread">
       <div class="statgrid" style="margin:0;flex:1;min-width:260px">
@@ -211,7 +211,6 @@ function renderWeek(){
 
   h += `<div id="tracklist">`;
   w.tracks.forEach((t,i)=>{
-    const added = t.status==="keep";
     h += `<div class="track ${i===selIdx?"sel":""}" data-i="${i}">
       <div class="head" data-head="${i}">
         <span class="idx">${String(i+1).padStart(2,"0")}</span>
@@ -227,13 +226,9 @@ function renderWeek(){
         </div>
         <div class="outcomerow">
           <div class="scorebtns">
-            <button class="sbtn ${t.status==="skip"?"on-skip":""}" data-score="skip" data-i="${i}">skip</button>
-            <button class="sbtn ${t.status==="like"?"on-like":""}" data-score="like" data-i="${i}">like</button>
-          </div>
-          <div class="addedseg">
-            <span class="clabel">ADDED?</span>
-            <button class="sbtn ${added?"on-keep":""}" data-added-yes="${i}">yes</button>
-            <button class="sbtn ${!added&&t.status!=="unscored"?"on-skip":""}" data-added-no="${i}">no</button>
+            <button class="sbtn ${t.status==="skip"?"on-skip":""}" data-score="skip" data-i="${i}" title="hate it">HATE</button>
+            <button class="sbtn ${t.status==="like"?"on-like":""}" data-score="like" data-i="${i}" title="alright, not playlist-worthy — saved for stats">LIKE</button>
+            <button class="sbtn ${t.status==="keep"?"on-keep":""}" data-score="keep" data-i="${i}" title="love it, want to hear it again">PLAYLIST</button>
           </div>
         </div>
       </div>
@@ -252,15 +247,8 @@ function renderWeek(){
   if(window.SongNotes) SongNotes.bind($("view-week"));
 
   $("view-week").querySelectorAll("[data-score]").forEach(b=>{
-    // taps stay on the track — like then ADDED? is a two-tap move on the SAME track.
-    // keyboard 1/2/3 keeps the auto-advance for speed.
+    // taps stay on the track; keyboard 1/2/3 keeps the auto-advance for speed.
     b.onclick = e=>{ e.stopPropagation(); setStatus(+b.dataset.i, b.dataset.score, false); };
-  });
-  $("view-week").querySelectorAll("[data-added-yes]").forEach(b=>{
-    b.onclick = e=>{ e.stopPropagation(); setAdded(+b.dataset.addedYes, true); };
-  });
-  $("view-week").querySelectorAll("[data-added-no]").forEach(b=>{
-    b.onclick = e=>{ e.stopPropagation(); setAdded(+b.dataset.addedNo, false); };
   });
   $("view-week").querySelectorAll("[data-scorebox]").forEach(el=>{
     el.addEventListener("change", ()=>{
@@ -338,13 +326,6 @@ function loadPlayer(i){
   const w = week(); const t = w.tracks[i];
   const pw = document.querySelector(`[data-pw="${i}"]`);
   pw.innerHTML = `<iframe src="https://open.spotify.com/embed/track/${t.id}?theme=0" allow="encrypted-media" loading="lazy"></iframe>`;
-}
-function setAdded(i, yes){
-  const w = week(); const t = w.tracks[i];
-  if(yes) t.status = "keep";
-  else t.status = (t.status==="like") ? "like" : "skip";
-  save(); renderWeek();
-  selIdx = i; paintSel(); // stay on this track — ADDED? is the second tap after like
 }
 function setStatus(i, status, advance){
   const w = week(); const t = w.tracks[i];

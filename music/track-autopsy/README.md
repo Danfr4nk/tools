@@ -5,7 +5,7 @@ A companion game to [MusicTrainer](https://github.com/Danfr4nk/tools/tree/main/m
 ## The loop
 
 Per track:
-1. **Triage** — skip / like / ★ added (same ladder as MusicTrainer)
+1. **Triage** — HATE / LIKE / PLAYLIST (same ladder as MusicTrainer)
 2. **Score** — 1–10 slider
 3. **WHAT DID IT?** — check-all-that-apply across 16 production/musical/context drivers (drop, sound design, bass weight, vocal-as-texture, set utility…)
 4. **KILL ONE** — remove one element and the track dies (identifies the load-bearing element)

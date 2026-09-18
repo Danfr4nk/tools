@@ -6,7 +6,7 @@ A weekly scoring instrument for Discover Weekly and Release Radar. Static site, 
 
 1. **New week** — paste the week's track list (Spotify URLs, URIs, or `uri | title | artists` lines) and the model's predictions (JSON or `uri, keep, 0.39` lines).
 2. **Lock predictions** — timestamped, then uneditable. This preserves the blind test: predictions are frozen before the first listen.
-3. **Score** — for each track: `skip` (do nothing) / `like` (liked only) / `keep` (liked + into the current playlist). Click the track to load its Spotify embed player, or listen in your own Spotify. Keyboard: `j`/`k` move, `1`/`2`/`3` score, `p` loads the player.
+3. **Score** — for each track: a 1.00–10.00 number, plus one verdict — `HATE` (hate it) / `LIKE` (alright, not playlist-worthy, saved for stats) / `PLAYLIST` (love it, want to hear it again). Click the track to load its Spotify embed player, or listen in your own Spotify. Keyboard: `j`/`k` move, `1`/`2`/`3` score, `p` loads the player.
 4. **Scoreboard** — per-track accuracy, precision, and recall against the locked predictions, plus a cumulative panel tracking progress toward the 240-decision / 90%-accuracy target.
 
 ## Deploy
