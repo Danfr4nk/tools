@@ -1,0 +1,6 @@
+# v3 run state -- never commit
+runs/
+audit/
+queue/
+__pycache__/
+entity_candidates.jsonl
