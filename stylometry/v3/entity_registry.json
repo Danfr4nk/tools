@@ -1,0 +1,34 @@
+{
+ "entries": [
+  {
+   "aliases": [
+    "alpha"
+   ],
+   "canonical": "Project Alpha",
+   "id": "example.project.alpha",
+   "kind": "project",
+   "provenance": {
+    "added_at": "2026-09-18",
+    "added_by": "seed",
+    "confirmed_by": null,
+    "source": "schema example"
+   },
+   "status": "candidate"
+  }
+ ],
+ "global_rates": {},
+ "note": "SEED ONLY. Contains no real names. Populate on the Mac at $STYLO_V3_DATA/entity_registry.json; never commit the populated file.",
+ "schema": {
+  "entries": "[{id, canonical, aliases[], kind, status: confirmed|candidate, provenance:{added_by, added_at, source, confirmed_by}}]",
+  "global_rates": "{entity_id: mentions_per_token}",
+  "rules": [
+   "append-only",
+   "candidates never match",
+   "no silent merges of similar names"
+  ],
+  "tier_rates": "{entity_id: {tier: mentions_per_token}}"
+ },
+ "status": "seed",
+ "tier_rates": {},
+ "version": "v3-registry-1"
+}

@@ -1,0 +1,6 @@
+{
+ "discourse": {},
+ "note": "Run build_topic_profiles.py against the 94,503-message baseline corpus. Layer A's topic + discourse axes report available=false until then.",
+ "status": "unbuilt",
+ "tiers": {}
+}
