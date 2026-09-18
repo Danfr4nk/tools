@@ -73,3 +73,12 @@ textarea{width:100%;min-height:140px;background:var(--panel);border:1px solid va
 .empty{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:32px 20px;text-align:center;color:var(--dim)}
 .empty .big{font-size:40px;margin-bottom:8px}
 .mono{font-family:var(--mono)}
+
+/* ---- SongNotes shared "why?" field ---- */
+.whybox{margin:10px 0 4px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.whysum{cursor:pointer;padding:8px 12px;font-size:11px;letter-spacing:1.5px;color:var(--dim);list-style:none;user-select:none}
+.whysum::-webkit-details-marker{display:none}
+.whysum:hover{color:var(--txt,#e6e9ef)}
+.whydot{color:var(--keep);font-size:10px;margin-left:4px}
+.whytext{display:block;width:100%;min-height:64px;resize:vertical;background:var(--bg);color:var(--txt,#e6e9ef);border:0;border-top:1px solid var(--line);border-radius:0 0 10px 10px;padding:10px 12px;font:13px/1.5 inherit;box-sizing:border-box}
+.whytext:focus{outline:1px solid var(--acc,#7dd3fc);outline-offset:-1px}

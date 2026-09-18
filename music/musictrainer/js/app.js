@@ -237,16 +237,19 @@ function renderWeek(){
           </div>
         </div>
       </div>
+      ${window.SongNotes?SongNotes.fieldHTML(t.id,{name:t.name,artists:t.artists,uri:"spotify:track:"+t.id}):""}
       <div class="player-wrap" data-pw="${i}"><button class="loadplayer" data-load="${i}">▶ load Spotify player</button></div>
     </div>`;
   });
   h += `</div>
     <div class="btnrow" style="margin-top:20px">
       <button class="btn ghost" id="exportbtn">export week JSON</button>
+      <button class="btn ghost" id="notesbtn">export song notes</button>
       <button class="btn ghost" id="backbtn">← all weeks</button>
       <button class="btn danger" id="delbtn">delete week</button>
     </div>`;
   $("view-week").innerHTML = h;
+  if(window.SongNotes) SongNotes.bind($("view-week"));
 
   $("view-week").querySelectorAll("[data-score]").forEach(b=>{
     b.onclick = e=>{ e.stopPropagation(); setStatus(+b.dataset.i, b.dataset.score, true); };
@@ -284,9 +287,23 @@ function renderWeek(){
     }
   };
   $("exportbtn").onclick = ()=>{
-    const blob = new Blob([JSON.stringify(w,null,1)],{type:"application/json"});
+    const out = Object.assign({}, w, { tracks: w.tracks.map(t=>{
+      const c = Object.assign({}, t);
+      if(window.SongNotes){ const n = SongNotes.get(t.id); if(n) c.note = n; }
+      return c;
+    })});
+    const blob = new Blob([JSON.stringify(out,null,1)],{type:"application/json"});
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = w.id+".json"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  };
+  const nb = $("notesbtn");
+  if(nb) nb.onclick = ()=>{
+    if(!window.SongNotes) return;
+    const blob = new Blob([SongNotes.exportJSON()],{type:"application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "song-notes.json"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
   };
   $("backbtn").onclick = ()=>{ save(); renderHome(); show("view-home"); };
   $("delbtn").onclick = ()=>{
@@ -368,6 +385,9 @@ function renderNew(){
         const w = JSON.parse(r.result);
         if(!w.tracks || !Array.isArray(w.tracks)) throw 0;
         w.id = w.id || "w-"+Date.now().toString(36);
+        if(window.SongNotes) w.tracks.forEach(t=>{
+          if(t.note && t.id) SongNotes.set(t.id, t.note, {name:t.name, artists:t.artists, uri:"spotify:track:"+t.id});
+        });
         state.weeks.push(w); state.currentWeekId = w.id; selIdx = 0;
         save(); renderWeek(); toast("week imported");
       }catch(err){ toast("import failed — not a week JSON"); }

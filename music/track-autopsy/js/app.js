@@ -136,11 +136,13 @@ function renderPlay(){
     <div class="chipgrid" id="attrgrid">${chipGrid(t,"attrs")}</div>
     <div class="q">KILL ONE — remove one element and the track dies</div>
     <div class="chipgrid" id="killgrid">${chipGrid(t,"kill")}</div>
+    ${window.SongNotes?SongNotes.fieldHTML(SongNotes.trackId(t.uri),{name:t.name,artists:t.artists,uri:t.uri},{label:"IN YOUR WORDS — what did it for you"}):""}
     <button class="nextbtn" id="nextbtn" ${t.status==="unscored"?"disabled":""}>next track →</button>
     <button class="skipbtn" id="laterbtn">do this one later</button>
     <div class="hint">The machine read the measurable stuff above — your taps are for what only ears can judge. Vocals count as texture, never as words.</div>
   </div>`;
   $("view-play").innerHTML = h;
+  if(window.SongNotes) SongNotes.bind($("view-play"));
 
   const eu = embedUrl(t);
   $("loadplayer").onclick = ()=>{
@@ -261,6 +263,9 @@ function renderImport(){
     <div class="sect">DATA</div>
     <div class="btnrow">
       <button class="btn ghost" id="exp-btn">export json</button>
+      <button class="btn ghost" id="exp-notes">export song notes</button>
+      <button class="btn ghost" id="imp-notes">import song notes…</button>
+      <input type="file" id="imp-notes-file" accept=".json" class="hidden">
       <button class="btn ghost" id="reset-btn">reset all</button>
     </div>
     <div class="hint">${state.tracks.length} tracks in the lab · ${state.tracks.filter(t=>t.done).length} dissected</div>`;
@@ -279,16 +284,44 @@ function renderImport(){
         attrs:{}, kill:null, done:false
       }));
       if(!ts.length){ toast("no tracks with URIs"); return; }
+      if(window.SongNotes) w.tracks.forEach(t=>{
+        if(t.note && t.uri){ const id = SongNotes.trackId(t.uri); if(id) SongNotes.set(id, t.note, {name:t.name, artists:t.artists, uri:t.uri}); }
+      });
       state.tracks.push(...ts); cur=0; save(); renderPlay(); show("play");
       toast(ts.length+" tracks imported"+(w.id?(" from "+w.id):""));
     }catch(e){ toast("import failed: "+e.message); }
   };
   $("exp-btn").onclick = ()=>{
-    const blob = new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+    const out = Object.assign({}, state, { tracks: state.tracks.map(t=>{
+      const c = Object.assign({}, t);
+      if(window.SongNotes){ const id = SongNotes.trackId(t.uri); const n = id && SongNotes.get(id); if(n) c.note = n; }
+      return c;
+    })});
+    const blob = new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "autopsy-export.json"; a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
   };
+  const xn = $("exp-notes");
+  if(xn && window.SongNotes) xn.onclick = ()=>{
+    const blob = new Blob([SongNotes.exportJSON()],{type:"application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "song-notes.json"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  };
+  const inb = $("imp-notes"), inf = $("imp-notes-file");
+  if(inb && inf && window.SongNotes){
+    inb.onclick = ()=>inf.click();
+    inf.onchange = e=>{
+      const f = e.target.files[0]; if(!f) return;
+      const r = new FileReader();
+      r.onload = ()=>{
+        try{ toast(SongNotes.importJSON(r.result)+" notes imported"); renderPlay(); }
+        catch(err){ toast("import failed: "+err.message); }
+      };
+      r.readAsText(f);
+    };
+  }
   $("reset-btn").onclick = ()=>{
     if(confirm("Wipe all autopsy data?")){ state={tracks:[]}; cur=0; save(); renderPlay(); renderDrivers(); renderImport(); }
   };

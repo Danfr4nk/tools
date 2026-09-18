@@ -28,3 +28,7 @@ Paste a **MusicTrainer week export** and every track arrives with its status + s
 - Vocals are texture, never words (lyric qualifier).
 - Static site, no backend, no Spotify API. `localStorage` key `autopsy.v1`.
 - Live at https://danfr4nk.github.io/tools/music/track-autopsy/
+
+## "In your words" notes
+
+The play view has an **IN YOUR WORDS** field per track — free-text on what the track did for you. Notes live in the shared `songnotes.v1` localStorage store (keyed by Spotify track ID, shared with MusicTrainer), ride along on JSON export, and are restored on import. Bulk export/import lives under Import → Data.

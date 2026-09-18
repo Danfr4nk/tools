@@ -16,3 +16,7 @@ Push to `main`; GitHub Pages serves the site root.
 ## Seed data
 
 `js/seed.js` ships week 1 (Discover Weekly, Sep 14 2026) with 30 tracks and the model's locked predictions, so the baseline test is ready to score out of the box.
+
+## "Why?" notes
+
+Every track has a collapsible **WHY?** field — write what grabbed you about the track, in your own words. Notes live in the shared `songnotes.v1` localStorage store (keyed by Spotify track ID), so they travel with the track into Autopsy and survive export/import: week exports carry each track's note, and importing a week restores them.
