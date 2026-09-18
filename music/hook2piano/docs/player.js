@@ -224,7 +224,28 @@ window.H2P = window.H2P || {};
       if (tt) tt.textContent = "";
     },
 
-    isPlaying: function () { return S.playing; }
+    isPlaying: function () { return S.playing; },
+
+    /* added for falling.js: current song time + scrubbing */
+    time: function () { return songTime(); },
+    duration: function () { return S.dur; },
+    seek: function (t) {
+      var song = window.H2P.lastSong;
+      if (!song) return;
+      if (song !== S.song) {
+        var f = flattenSong(song);
+        S.song = song; S.evs = f.events; S.dur = f.dur;
+      }
+      var was = S.playing;
+      if (was) api.pause();
+      S.offset = Math.max(0, Math.min(t, S.dur));
+      if (was) { api.play(); return; }
+      drawPlayhead(S.offset);
+      var bar = document.getElementById("tbar");
+      if (bar && S.dur > 0) bar.style.width = Math.min(100, (S.offset / S.dur) * 100) + "%";
+      var tt = document.getElementById("ttime");
+      if (tt) tt.textContent = fmt(S.offset) + " / " + fmt(S.dur);
+    }
   };
 
   window.H2P.player = api;
