@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>scenario lab — psychometric instrument</title>
+<style>
+  :root{
+    --bg:#101216; --panel:#181b21; --line:#2a2e37; --txt:#e8eaf0; --dim:#9aa0ad;
+    --acc:#7fd08c; --veto:#e06c75; --pick:#61afef; --gold:#e5c07b; --vio:#c678dd;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{background:var(--bg);color:var(--txt);
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:15px;line-height:1.55;min-height:100vh;}
+  .wrap{max-width:640px;margin:0 auto;padding:16px 14px 60px;}
+  header.hud{border:1px solid var(--line);background:var(--panel);padding:12px 14px;margin-bottom:12px;}
+  header.hud h1{margin:0;font-size:15px;letter-spacing:.14em;color:#fff;}
+  header.hud h1 .dim{color:var(--dim);font-weight:400;}
+  header.hud .sub{color:var(--dim);font-size:12px;margin-top:4px;}
+  header.hud .sub .menu{color:var(--gold);}
+  #prog{height:6px;background:#22262e;border-radius:3px;overflow:hidden;margin:10px 0 4px;}
+  #prog>div{height:100%;width:0;background:var(--acc);transition:width .25s;}
+  #progText{color:var(--dim);font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;}
+  .phase{font-size:11px;letter-spacing:.18em;color:var(--vio);margin:10px 0 8px;}
+  .q{font-size:13px;color:var(--dim);margin:2px 0 10px;}
+  .card{display:block;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:16px;color:var(--txt);font:inherit;cursor:pointer;margin-bottom:10px;}
+  .card:active{border-color:var(--acc);background:#1c2027;}
+  .card .tags{margin-bottom:8px;}
+  .card .tg{display:inline-block;font-size:10.5px;letter-spacing:.1em;border:1px solid var(--gold);
+    color:var(--gold);border-radius:3px;padding:2px 8px;margin:0 4px 4px 0;}
+  .card .tg.cfg{border-color:var(--pick);color:var(--pick);font-weight:700;}
+  .card .tg.new{border-color:var(--vio);color:var(--vio);}
+  .card .bl{font-size:15px;margin:6px 0;}
+  .card .bl b{color:#fff;}
+  .card .diff{color:var(--gold);}
+  .row3{display:flex;gap:8px;margin-top:6px;}
+  .row3 button{flex:1;padding:12px 4px;border-radius:10px;border:1px solid var(--line);
+    background:transparent;color:var(--dim);font:inherit;font-size:13px;cursor:pointer;}
+  .row3 button:active{border-color:var(--veto);color:var(--veto);}
+  .btn{display:block;width:100%;padding:14px;border-radius:10px;border:1px solid var(--acc);
+    background:transparent;color:var(--acc);font:inherit;font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;}
+  .btn.ghost{border-color:var(--line);color:var(--dim);font-weight:400;}
+  .note{font-size:12.5px;color:var(--dim);margin-top:14px;}
+  .note b{color:var(--txt);font-weight:400;}
+  h3.sec{font-size:12px;letter-spacing:.2em;color:var(--dim);margin:26px 0 8px;font-weight:400;}
+  .trow{margin:6px 0;font-size:13px;}
+  .trow .nm{display:flex;justify-content:space-between;}
+  .trow .nm .w{color:var(--acc);}
+  .trow .nm .w.neg{color:var(--veto);}
+  .trow .tr{height:8px;background:#22262e;border-radius:4px;margin-top:3px;position:relative;overflow:hidden;}
+  .trow .fl{height:100%;border-radius:4px;background:var(--pick);position:absolute;}
+  .trow .fl.neg{background:var(--veto);}
+  .trow .se{font-size:11px;color:var(--dim);}
+  .pill{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:20px;
+    padding:3px 10px;margin:2px 4px 2px 0;color:var(--dim);}
+  .pill.hot{color:var(--acc);border-color:var(--acc);}
+  .pill.cold{color:var(--veto);border-color:var(--veto);}
+  .vetoBox{border:1px solid var(--veto);border-radius:10px;padding:12px 14px;margin:8px 0;font-size:13.5px;}
+  .vetoBox b{color:var(--veto);}
+  .hitBox{border:1px solid var(--gold);border-radius:10px;padding:12px 14px;margin:8px 0;font-size:13.5px;}
+  .hitBox b{color:var(--gold);}
+  table.rep{width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0;}
+  table.rep td,table.rep th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top;}
+  table.rep th{color:var(--dim);font-weight:400;}
+  pre.exp{background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:12px;
+    font-size:11px;overflow:auto;max-height:300px;color:var(--dim);white-space:pre-wrap;word-break:break-word;}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+'use strict';
+/* =====================================================================
+   SCENARIO LAB — psychometric instrument for psychosexual preference.
+   Scenario vocabulary is grounded in a real generalist tube site's
+   category menu: Pornhub /categories (96 categories, taxonomy observed
+   2026-06-27). Configs, acts, intensity, framing and setting tags below
+   map 1:1 onto those categories (ph id noted); the lab layer adds the
+   structural factors the menu can't express (turf, duration, pursuit…,
+   carried over from scenario-ratings v1).
+   Forced choice (A vs B) -> part-worths via ridge-penalized logistic
+   regression on tag/level dummies (penalty centered on v1 + menu priors).
+   No 1-10 ratings: discrimination comes from choice, killing the v1
+   ceiling effect (64% of v1 ratings sat at 9-10).
+   ===================================================================== */
+
+/* ---------------- 1. menu-grounded tag taxonomy ----------------
+   ph = Pornhub /categories id. classes: config | act | intl | fram | set */
+const MENU = [
+  // configurations — exactly one per scenario
+  {t:'solo_m',   c:'config', ph:92,  label:'SOLO MALE',
+   body:"Just you and him. No woman in the picture."},
+  {t:'mmf',      c:'config', ph:65,  label:'MMF THREESOME',
+   body:"You, her, and one other guy."},
+  {t:'ffm',      c:'config', ph:761, label:'FFM THREESOME',
+   body:"You, her, and another woman."},
+  {t:'foursome', c:'config', ph:null,label:'FOURSOME',
+   body:"You two and another couple."},
+  {t:'orgy',     c:'config', ph:2,   label:'ORGY',
+   body:"A room full of people. You, her, and several guys."},
+  {t:'gangbang', c:'config', ph:80,  label:'GANGBANG',
+   body:"Her and five guys. You're in the room."},
+  {t:'cuckold',  c:'config', ph:242, label:'CUCKOLD',
+   body:"You watch her get fucked. You don't touch."},
+  {t:'bi_male',  c:'config', ph:76,  label:'BISEXUAL MALE',
+   body:"You and another guy, into each other, her watching."},
+  {t:'voyeur',   c:'config', ph:null,label:'VOYEUR',
+   body:"You watch from the corner. Nobody knows you're there."},
+  // acts — 0..3 per scenario, rendered as the menu line
+  {t:'blowjob',  c:'act', ph:13,  label:'blowjobs', phr:"blowjobs — deep-throating"},
+  {t:'anal',     c:'act', ph:35,  label:'anal', phr:"anal"},
+  {t:'toys',     c:'act', ph:23,  label:'toys', phr:"toys on everyone"},
+  {t:'dp',       c:'act', ph:72,  label:'double penetration', phr:"double penetration"},
+  {t:'creampie', c:'act', ph:15,  label:'creampies', phr:"creampies"},
+  {t:'facial',   c:'act', ph:16,  label:'facials', phr:"facials — cum on faces"},
+  {t:'fisting',  c:'act', ph:19,  label:'fisting', phr:"fisting"},
+  {t:'squirt',   c:'act', ph:69,  label:'squirting', phr:"squirting"},
+  {t:'strapon',  c:'act', ph:542, label:'strap-on', phr:"she pegs you with a strap-on"},
+  {t:'feet',     c:'act', ph:93,  label:'feet', phr:"feet worship"},
+  {t:'pissing',  c:'act', ph:211, label:'piss play', phr:"piss play"},
+  {t:'bukkake',  c:'act', ph:14,  label:'bukkake', phr:"bukkake"},
+  // intensity — 0..1
+  {t:'rough',    c:'intl', ph:67,  label:'ROUGH', phr:"Rough — hair-pulling, slapping, pounding."},
+  {t:'romantic', c:'intl', ph:522, label:'ROMANTIC', phr:"Slow and romantic — eye contact, kissing."},
+  {t:'bondage',  c:'intl', ph:10,  label:'BONDAGE', phr:"Bondage — restraints, control."},
+  // framing — 0..2 (production tags from the menu)
+  {t:'amateur',  c:'fram', ph:3,  label:'AMATEUR', phr:"Shot on a phone, no crew."},
+  {t:'pov',      c:'fram', ph:41, label:'POV', phr:"Shot POV — you see what he sees."},
+  {t:'webcam',   c:'fram', ph:61, label:'WEBCAM', phr:"Streamed live on webcam."},
+  // setting — 0..1
+  {t:'party',    c:'set', ph:53, label:'PARTY', phr:"At a house party — music, crowd, drugs around."},
+  {t:'public',   c:'set', ph:24, label:'PUBLIC', phr:"In public — real risk of getting caught."},
+];
+const TAG = {}; MENU.forEach(m=>TAG[m.t]=m);
+const CONFIGS = MENU.filter(m=>m.c==='config').map(m=>m.t);
+const ACTS = MENU.filter(m=>m.c==='act').map(m=>m.t);
+const INTLS = MENU.filter(m=>m.c==='intl').map(m=>m.t);
+const FRAMS = MENU.filter(m=>m.c==='fram').map(m=>m.t);
+const SETS = MENU.filter(m=>m.c==='set').map(m=>m.t);
+
+/* which structural factors apply per config (coherence) */
+const STRUCT = [
+  {k:'film',  name:'Recorded', lv:['Not recorded','Unclear','Filmed'],
+   phr:['No cameras.','Unclear if it\'s recorded.','She films everything.']},
+  {k:'turf',  name:'Turf', lv:['Your place','Neutral ground','His place'],
+   phr:['At your place.','A hotel — neutral ground.','At his place.']},
+  {k:'dur',   name:'Duration', lv:['One scene','An evening','Ongoing'],
+   phr:['One scene, then done.','Plays out over an evening.','Becomes a regular thing.']},
+  {k:'P_pur', name:'His pursuit', lv:['He experiments','Mild interest','He pursues you'],
+   phr:["He's experimenting, half into it.","Mild interest — he's willing.","He pursues you — hands on you first."]},
+  {k:'M_fam', name:'Who he is', lv:['Stranger','Acquaintance','Friend'],
+   phr:['Total stranger.',"A guy you've partied with before.",'One of your actual friends.']},
+  {k:'M_age', name:'His age', lv:['Younger','Your age','Older, takes charge'],
+   phr:["He's younger than you.",'Around your age.','Older, experienced — takes charge.']},
+  {k:'expl',  name:'Talk', lv:['Unspoken','Negotiated','Dirty talk'],
+   phr:['Nobody says a word — it just happens.','Negotiated upfront, then it happens.','Explicit dirty talk — she narrates what he\'s doing to you.']},
+  {k:'atten', name:'Spotlight', lv:["You're the focus",'Shared',"You're peripheral"],
+   phr:["You're the focus — it's all about you.",'Shared spotlight.',"You're peripheral — it's mostly about them."]},
+  {k:'recip', name:'Reciprocity', lv:['You give','Mutual','You receive'],
+   phr:["You're servicing him — on your knees.",'Mutual — back and forth.',"He's servicing you — you're getting your dick sucked."]},
+];
+const SIDX = {}; STRUCT.forEach((s,i)=>SIDX[s.k]=i);
+/* structural factors coherent with each config */
+const COHERENT = {
+  solo_m:['film','turf','dur','P_pur','M_fam','M_age','expl','recip'],
+  mmf:['film','turf','dur','P_pur','M_fam','M_age','expl','atten','recip'],
+  ffm:['film','turf','dur','expl','atten','recip'],
+  foursome:['film','turf','dur','P_pur','expl','atten'],
+  orgy:['film','dur','expl','atten'],
+  gangbang:['film','dur','expl','atten'],
+  cuckold:['film','dur','expl','M_fam'],
+  bi_male:['film','turf','dur','P_pur','M_fam','M_age','expl'],
+  voyeur:['film','dur'],
+};
+/* acts coherent with each config */
+function coherentActs(cfg){
+  if (cfg==='cuckold' || cfg==='voyeur')
+    return ACTS.filter(a=>!['strapon','dp','fisting'].includes(a)); // watched acts only
+  if (cfg==='solo_m') return ACTS.filter(a=>a!=='strapon');
+  if (cfg==='ffm') return ACTS.filter(a=>!['strapon','dp','bukkake'].includes(a));
+  return ACTS.slice();
+}
+/* strapon needs her present */
+function coherentConfigForAct(act){
+  if (act==='strapon') return ['mmf','foursome','orgy'];
+  return CONFIGS.slice();
+}
+
+/* ---------------- 2. priors (v1 + menu) ---------------- */
+const PRIORS = {
+  // configs, relative to mmf baseline (his home turf)
+  cfg:{ solo_m:0.2, ffm:-0.2, foursome:0.8, orgy:0.3, gangbang:0.1,
+        cuckold:0.4, bi_male:0.5, voyeur:0.3 },
+  // acts, present vs absent
+  act:{ blowjob:0.5, anal:0.2, toys:0.0, dp:0.2, creampie:0.3, facial:0.2,
+        fisting:-0.3, squirt:0.1, strapon:-1.5, feet:-0.2, pissing:-0.5, bukkake:-0.3 },
+  intl:{ rough:0.6, romantic:-0.1, bondage:0.2 },
+  fram:{ amateur:0.3, pov:0.2, webcam:0.0 },
+  set:{ party:0.3, public:-0.2 },
+  // structural, level vs level 0 (from v1)
+  film:[0,0.2,0.8], turf:[0,0.9,-0.6], dur:[0,0.5,1.0],
+  P_pur:[0,0.5,1.0], M_fam:[0,0.3,-1.2], M_age:[0.4,0,-1.8],
+  expl:[0,-0.2,0.7], atten:[0,0.5,0.6], recip:[0,0.0,-0.3],
+};
+function hotLevel(k){ const p=PRIORS[k]; let bi=0; for(let i=1;i<p.length;i++) if(p[i]>p[bi]) bi=i; return bi; }
+function coldLevel(k){ const p=PRIORS[k]; let bi=0; for(let i=1;i<p.length;i++) if(p[i]<p[bi]) bi=i; return bi; }
+</script>
+<script>
+'use strict';
+/* ---------------- 3. scenario generator ----------------
+   spec: {config, acts[], intl|null, fram[], set|null, struct:{k:level}}
+   card: {title, lines[], tags (for novelty marking), vec}               */
+function rnd(a){ return a[Math.floor(Math.random()*a.length)]; }
+function sampleActs(cfg, n){
+  const pool = coherentActs(cfg).filter(a=>coherentConfigForAct(a).includes(cfg));
+  const out = [];
+  while(out.length<n && pool.length){
+    const a = pool.splice(Math.floor(Math.random()*pool.length),1)[0];
+    out.push(a);
+  }
+  return out;
+}
+function genScenario(spec){
+  spec = spec || {};
+  const cfg = spec.config || rnd(CONFIGS);
+  const C = TAG[cfg];
+  const acts = spec.acts || sampleActs(cfg, 1+Math.floor(Math.random()*2));
+  const intl = spec.intl !== undefined ? spec.intl : (Math.random()<0.55 ? rnd(INTLS) : null);
+  const fram = spec.fram || (Math.random()<0.6 ? [rnd(FRAMS)] : []);
+  const set = spec.set !== undefined ? spec.set : (Math.random()<0.25 ? rnd(SETS) : null);
+  const coh = COHERENT[cfg];
+  const struct = {};
+  coh.forEach(k=>{
+    struct[k] = (spec.struct && spec.struct[k]!==undefined)
+      ? spec.struct[k] : Math.floor(Math.random()*3);
+  });
+  // title: framing prefixes + config label
+  const fr = fram.map(f=>TAG[f].label).join(' · ');
+  const title = (fr?fr+' · ':'')+C.label;
+  const lines = [];
+  lines.push({t:'cfg', html:'<b>'+C.body+'</b>'});
+  if (acts.length) lines.push({t:'act',
+    html:'On the menu: <b>'+acts.map(a=>TAG[a].phr).join(', ')+'</b>.'});
+  if (intl) lines.push({t:'intl', html:TAG[intl].phr});
+  fram.forEach(f=>lines.push({t:'fram', html:TAG[f].phr}));
+  if (set) lines.push({t:'set', html:TAG[set].phr});
+  coh.forEach(k=>{
+    const s = STRUCT[SIDX[k]];
+    lines.push({t:'st:'+k, html:s.phr[struct[k]]});
+  });
+  const tags = {};
+  tags[cfg]=1; acts.forEach(a=>tags[a]=1);
+  if (intl) tags[intl]=1; fram.forEach(f=>tags[f]=1); if (set) tags[set]=1;
+  return {config:cfg, acts:acts, intl:intl, fram:fram, set:set,
+          struct:struct, title:title, lines:lines, tags:tags};
+}
+/* hot/cold builders for calibration + boundary bracketing */
+function hotStruct(coh){ const o={}; coh.forEach(k=>o[k]=hotLevel(k)); return o; }
+function coldStruct(coh){ const o={}; coh.forEach(k=>o[k]=coldLevel(k)); return o; }
+function hotScenario(cfg){
+  cfg = cfg || 'mmf';
+  return genScenario({config:cfg, acts:['blowjob','anal'], intl:'rough',
+    fram:['amateur'], set:null, struct:hotStruct(COHERENT[cfg])});
+}
+function coldScenario(cfg){
+  cfg = cfg || 'voyeur';
+  return genScenario({config:cfg, acts:['feet'], intl:'romantic',
+    fram:[], set:null, struct:coldStruct(COHERENT[cfg])});
+}
+/* clone with one structural factor moved, or one tag toggled */
+function cloneScenario(sc, mut){
+  const spec = {config:sc.config, acts:sc.acts.slice(),
+    intl:sc.intl, fram:sc.fram.slice(), set:sc.set,
+    struct:Object.assign({}, sc.struct)};
+  if (mut.tag){
+    const t = mut.tag, m = TAG[t];
+    if (m.c==='act'){
+      if (spec.acts.includes(t)) spec.acts = spec.acts.filter(a=>a!==t);
+      else { spec.acts.push(t); spec.config = rnd(coherentConfigForAct(t)); }
+    } else if (m.c==='intl'){ spec.intl = (spec.intl===t?null:t); }
+    else if (m.c==='fram'){
+      spec.fram = spec.fram.includes(t) ? spec.fram.filter(f=>f!==t) : spec.fram.concat([t]);
+    } else if (m.c==='set'){ spec.set = (spec.set===t?null:t); }
+  }
+  if (mut.struct){ spec.struct[mut.struct.k] = mut.struct.to; }
+  return genScenario(spec);
+}
+
+/* ---------------- 4. encoding ----------------
+   config: reference-coded vs mmf (8 dummies)
+   every other tag: present vs absent (1 dummy)
+   structural factor: level 1..2 vs level 0 (2 dummies)                 */
+const CFG_REF = 'mmf';
+function dims(){
+  const d = [];
+  CONFIGS.forEach(c=>{ if(c!==CFG_REF) d.push({kind:'cfg', key:c, label:TAG[c].label}); });
+  ACTS.forEach(a=>d.push({kind:'act', key:a, label:TAG[a].label}));
+  INTLS.forEach(a=>d.push({kind:'intl', key:a, label:TAG[a].label}));
+  FRAMS.forEach(a=>d.push({kind:'fram', key:a, label:TAG[a].label}));
+  SETS.forEach(a=>d.push({kind:'set', key:a, label:TAG[a].label}));
+  STRUCT.forEach(s=>{
+    for(let l=1;l<s.lv.length;l++)
+      d.push({kind:'st', key:s.k+':'+l, skey:s.k, lvl:l,
+              label:s.name+' = '+s.lv[l]});
+  });
+  return d;
+}
+const DIMS = dims();
+const DPOS = {}; DIMS.forEach((d,i)=>DPOS[d.kind+':'+d.key]=i);
+function priorVec(){
+  const p = new Array(DIMS.length);
+  DIMS.forEach((d,i)=>{
+    if (d.kind==='cfg') p[i]=PRIORS.cfg[d.key]||0;
+    else if (d.kind==='st') p[i]=PRIORS[d.skey][d.lvl]||0;
+    else p[i]=(PRIORS[d.kind]||{})[d.key]||0;
+  });
+  return p;
+}
+function encode(sc){
+  const v = new Array(DIMS.length).fill(0);
+  CONFIGS.forEach(c=>{
+    if (c!==CFG_REF && sc.config===c) v[DPOS['cfg:'+c]]=1;
+  });
+  ['act','intl','fram','set'].forEach(()=>{});
+  sc.acts.forEach(a=>{ const i=DPOS['act:'+a]; if(i!==undefined) v[i]=1; });
+  if (sc.intl){ const i=DPOS['intl:'+sc.intl]; if(i!==undefined) v[i]=1; }
+  sc.fram.forEach(f=>{ const i=DPOS['fram:'+f]; if(i!==undefined) v[i]=1; });
+  if (sc.set){ const i=DPOS['set:'+sc.set]; if(i!==undefined) v[i]=1; }
+  STRUCT.forEach(s=>{
+    const lv = sc.struct[s.k];
+    if (lv===undefined) return;
+    for(let l=1;l<s.lv.length;l++) v[DPOS['st:'+s.k+':'+l]] = (lv===l)?1:0;
+  });
+  return v;
+}
+function diffVec(a,b){ const va=encode(a), vb=encode(b); return va.map((x,i)=>x-vb[i]); }
+
+/* ---------------- 5. trial planner ---------------- */
+const PLAN = [
+  // calibration anchors (fixed, menu-grounded)
+  {phase:'calib', a:()=>hotScenario('mmf'), b:()=>cloneScenario(hotScenario('mmf'),{tag:'strapon'}),
+   note:'hot MMF vs strapon floor probe'},
+  {phase:'calib', a:()=>hotScenario('foursome'), b:()=>coldScenario('voyeur'), note:'hot vs cold'},
+  {phase:'calib', a:()=>hotScenario('mmf'), b:()=>coldScenario('mmf'), note:'MMF top vs bottom'},
+  {phase:'calib', a:()=>hotScenario('bi_male'), b:()=>coldScenario('ffm'), note:'novel configs'},
+  {phase:'calib', a:()=>hotScenario('cuckold'), b:()=>coldScenario('cuckold'), note:'cuckold spread'},
+  {phase:'calib', a:()=>hotScenario('orgy'), b:()=>hotScenario('gangbang'), note:'two warm configs'},
+  // floor probes: does the pegging floor move?
+  {phase:'floor', a:()=>{const s=hotScenario('mmf');s.acts=['strapon'];return genScenario({config:'mmf',acts:['strapon'],intl:'rough',fram:['amateur'],struct:hotStruct(COHERENT.mmf)});},
+                 b:()=>{return genScenario({config:'mmf',acts:['strapon'],intl:'romantic',fram:['amateur'],struct:coldStruct(COHERENT.mmf)});},
+   note:'floor: strapon hot vs strapon cold'},
+  {phase:'floor', a:()=>genScenario({config:'mmf',acts:['strapon','blowjob'],intl:null,fram:[],struct:hotStruct(COHERENT.mmf)}),
+                 b:()=>hotScenario('mmf'), note:'floor vs home base'},
+  {phase:'floor', a:()=>genScenario({config:'mmf',acts:['strapon'],intl:null,fram:[],struct:Object.assign(hotStruct(COHERENT.mmf),{P_pur:2})}),
+                 b:()=>genScenario({config:'mmf',acts:['strapon'],intl:null,fram:[],struct:Object.assign(hotStruct(COHERENT.mmf),{P_pur:0})}),
+   note:'floor: his pursuit on vs off (v1 +4 lever retest)'},
+  {phase:'floor', a:()=>genScenario({config:'cuckold',acts:['blowjob'],intl:null,fram:[],struct:coldStruct(COHERENT.cuckold)}),
+                 b:()=>genScenario({config:'mmf',acts:['strapon'],intl:null,fram:[],struct:coldStruct(COHERENT.mmf)}),
+   note:'floor vs coldest watched'},
+];
+const N_PROBE=22, N_BOUND=8, N_DISC=10;
+function trialCount(){ return PLAN.length + N_PROBE + N_BOUND + N_DISC; } // 50
+
+/* coverage counters over tags + structural factors */
+function newCoverage(){
+  const c = {tag:{}, st:{}};
+  MENU.forEach(m=>c.tag[m.t]=0);
+  STRUCT.forEach(s=>c.st[s.k]=0);
+  return c;
+}
+function coverScenario(cov, sc, delta){
+  Object.keys(sc.tags).forEach(t=>cov.tag[t]+=delta);
+  Object.keys(sc.struct).forEach(k=>cov.st[k]+=delta);
+}
+/* pick the dim with max posterior SE (uncertainty sampling); fallback: least-covered */
+function probeTrial(sess){
+  let dim = null;
+  if (sess.fit){
+    let bi = 0;
+    for (let i=1;i<DIMS.length;i++) if (sess.fit.se[i] > sess.fit.se[bi]) bi = i;
+    dim = DIMS[bi];
+  } else {
+    const cov = sess.cov;
+    let cands = [];
+    MENU.forEach(m=>{ if(m.c!=='config') cands.push({kind:m.c, key:m.t, cov:cov.tag[m.t]}); });
+    CONFIGS.forEach(c=>cands.push({kind:'cfg', key:c, cov:cov.tag[c]}));
+    STRUCT.forEach(s=>cands.push({kind:'st', key:s.k+':'+hotLevel(s.k), skey:s.k, lvl:hotLevel(s.k), cov:cov.st[s.k]}));
+    cands.sort((a,b)=>a.cov-b.cov);
+    const p = rnd(cands.filter(c=>c.cov===cands[0].cov));
+    dim = p.kind==='st' ? {kind:'st', key:p.key, skey:p.skey, lvl:p.lvl, label:''} : p;
+  }
+  return trialForDim(sess, dim, 'probe');
+}
+function trialForDim(sess, dim, phase){
+  let a, b, note;
+  if (dim.kind==='cfg'){
+    // matched: same acts/intensity/framing where coherent, config switched
+    const base = (phase==='boundary') ? hotScenario() : genScenario();
+    a = base;
+    const acts = sampleActs(dim.key, Math.min(2, base.acts.length));
+    const st = {};
+    COHERENT[dim.key].forEach(k=>{ st[k] = base.struct[k]!==undefined ? base.struct[k] : hotLevel(k); });
+    b = genScenario({config:dim.key, acts:acts, intl:base.intl, fram:base.fram,
+      set:base.set, struct:st});
+    note = phase+': config '+TAG[dim.key].label+' vs '+TAG[base.config].label+' (matched)';
+  } else if (dim.kind==='st'){
+    const k = dim.skey;
+    let base = genScenario();
+    if (!COHERENT[base.config].includes(k)) base = genScenario({config:'mmf'});
+    const lo = coldLevel(k), hi = hotLevel(k);
+    a = cloneScenario(base, {struct:{k:k, to:hi}});
+    b = cloneScenario(base, {struct:{k:k, to:lo}});
+    note = phase+': '+STRUCT[SIDX[k]].name+' '+STRUCT[SIDX[k]].lv[hi]+' vs '+STRUCT[SIDX[k]].lv[lo];
+  } else {
+    const base = genScenario();
+    a = cloneScenario(base, {tag:dim.key});
+    b = base;
+    note = phase+': tag "'+TAG[dim.key].label+'" on vs off';
+  }
+  if (Math.random()<0.5){ const t=a; a=b; b=t; }
+  return {phase:phase, a:a, b:b, note:note};
+}
+/* boundary: take the dimension with the biggest |weight|, bracket indifference */
+function boundaryTrial(sess){
+  const fit = sess.fit;
+  let best = null;
+  DIMS.forEach((d,i)=>{
+    const w = fit.w[i], se = fit.se[i];
+    const score = Math.abs(w);
+    if (!best || score>best.score) best = {d:d, i:i, score:score, w:w, se:se};
+  });
+  const d = best.d;
+  if (d.kind==='cfg'){
+    // matched config switch inside a hot scenario (clone can't toggle configs)
+    const t = trialForDim(sess, d, 'boundary');
+    t.note = 'boundary: does "'+d.label+'" flip a hot scenario?';
+    return t;
+  }
+  let a, b, note;
+  if (d.kind==='act' || d.kind==='intl' || d.kind==='fram' || d.kind==='set'){
+    const base = hotScenario();
+    a = cloneScenario(base, {tag:d.key});
+    b = base;
+    note = 'boundary: does "'+d.label+'" flip a hot scenario?';
+  } else {
+    const k = d.skey, base = hotScenario();
+    if (!COHERENT[base.config].includes(k)){ const b2 = hotScenario('mmf'); a = b2; b = cloneScenario(b2,{struct:{k:k,to:coldLevel(k)}}); }
+    else { a = base; b = cloneScenario(base, {struct:{k:k, to:coldLevel(k)}}); }
+    note = 'boundary: '+STRUCT[SIDX[k]].name+' hot vs cold inside a hot scenario';
+  }
+  if (Math.random()<0.5){ const t=a; a=b; b=t; }
+  return {phase:'boundary', a:a, b:b, note:note};
+}
+/* discovery: novelty-biased — sample zero/low-coverage tags, far from his cluster */
+function discoveryTrial(sess){
+  const cov = sess.cov;
+  const freshActs = ACTS.filter(a=>cov.tag[a]<=1);
+  const freshCfg = CONFIGS.filter(c=>cov.tag[c]<=1);
+  const cfg = freshCfg.length && Math.random()<0.6 ? rnd(freshCfg) : rnd(CONFIGS);
+  const acts = [];
+  const pool = coherentActs(cfg).filter(a=>coherentConfigForAct(a).includes(cfg));
+  if (freshActs.length && Math.random()<0.7){
+    const fa = rnd(freshActs.filter(a=>pool.includes(a)));
+    if (fa) acts.push(fa);
+  }
+  while (acts.length<2 && pool.length){
+    const a = pool.splice(Math.floor(Math.random()*pool.length),1)[0];
+    if (!acts.includes(a)) acts.push(a);
+  }
+  const sc = genScenario({config:cfg, acts:acts,
+    intl: Math.random()<0.5?rnd(INTLS):null,
+    fram: Math.random()<0.5?[rnd(FRAMS)]:[],
+    struct: hotStruct(COHERENT[cfg])});
+  const other = hotScenario();
+  const swap = Math.random()<0.5;
+  return {phase:'discover', a:swap?other:sc, b:swap?sc:other,
+    note:'discovery: fresh combo ('+cfg+(acts.length?', '+acts.join('+'):'')+') vs home base'};
+}
+function nextTrial(sess){
+  const n = sess.trials.length;
+  if (n < PLAN.length){
+    const p = PLAN[n];
+    const t = {phase:p.phase, a:p.a(), b:p.b(), note:p.note, idx:n};
+    if (Math.random()<0.5){ const x=t.a; t.a=t.b; t.b=x; }
+    return t;
+  }
+  const np = n - PLAN.length;
+  if (np < N_PROBE) return Object.assign(probeTrial(sess), {idx:n});
+  if (np < N_PROBE+N_BOUND){
+    if (!sess.fit || np===N_PROBE) fitSession(sess);
+    return Object.assign(boundaryTrial(sess), {idx:n});
+  }
+  return Object.assign(discoveryTrial(sess), {idx:n});
+}
+</script>
+<script>
+'use strict';
+/* ---------------- 6. ridge-penalized logistic (Bradley-Terry) ----------------
+   P(pick A) = logistic((uA-uB)); rows = diffVec. Ridge centered on priors.
+   Validated 2026-09-18 on synthetic data: recovered 4/4 factor rankings.   */
+function fitBT(rows, ys, prior, lambda){
+  lambda = lambda===undefined?4:lambda;
+  const d = rows[0].length, n = rows.length;
+  let w = prior.slice();
+  for (let it=0; it<200; it++){
+    const g = new Array(d).fill(0), H = [];
+    for (let i=0;i<d;i++){ H.push(new Array(d).fill(0)); H[i][i]=lambda; }
+    for (let r=0;r<n;r++){
+      let z = 0; for (let j=0;j<d;j++) z += w[j]*rows[r][j];
+      const p = 1/(1+Math.exp(-z)), y = ys[r];
+      const s = p*(1-p);
+      for (let j=0;j<d;j++) g[j] += (p-y)*rows[r][j];
+      for (let j=0;j<d;j++) for (let k=0;k<d;k++) H[j][k] += s*rows[r][j]*rows[r][k];
+    }
+    for (let j=0;j<d;j++) g[j] += lambda*(w[j]-prior[j]);
+    // solve H*delta = g via Gauss-Jordan
+    const A = H.map((row,i)=>row.concat([g[i]]));
+    for (let col=0; col<d; col++){
+      let piv = col;
+      for (let r2=col+1;r2<d;r2++) if (Math.abs(A[r2][col])>Math.abs(A[piv][col])) piv=r2;
+      const tmp=A[col]; A[col]=A[piv]; A[piv]=tmp;
+      const pv = A[col][col] || 1e-9;
+      for (let r2=0;r2<d;r2++){
+        if (r2===col) continue;
+        const f = A[r2][col]/pv;
+        if (f!==0) for (let c2=col;c2<=d;c2++) A[r2][c2]-=f*A[col][c2];
+      }
+    }
+    let maxStep = 0;
+    for (let j=0;j<d;j++){ const step = A[j][d]/(A[j][j]||1e-9); w[j]-=step; maxStep=Math.max(maxStep,Math.abs(step)); }
+    if (maxStep<1e-7) break;
+  }
+  // SEs from final Hessian diagonal
+  const H = [];
+  for (let i=0;i<d;i++){ H.push(new Array(d).fill(0)); H[i][i]=lambda; }
+  for (let r=0;r<n;r++){
+    let z=0; for(let j=0;j<d;j++) z+=w[j]*rows[r][j];
+    const s=(1/(1+Math.exp(-z)))*(1-1/(1+Math.exp(-z)));
+    for (let j=0;j<d;j++) for (let k=0;k<d;k++) H[j][k]+=s*rows[r][j]*rows[r][k];
+  }
+  const A = H.map((row,i)=>row.map((v,j)=>j===i?v:row[j]).concat(new Array(d).fill(0).map((_,j)=>j===i?1:0)));
+  for (let col=0; col<d; col++){
+    let piv=col; for(let r2=col+1;r2<d;r2++) if(Math.abs(A[r2][col])>Math.abs(A[piv][col])) piv=r2;
+    const tmp=A[col]; A[col]=A[piv]; A[piv]=tmp;
+    const pv=A[col][col]||1e-9;
+    for(let c2=0;c2<2*d;c2++) A[col][c2]/=pv;
+    for(let r2=0;r2<d;r2++){ if(r2===col) continue; const f=A[r2][col];
+      for(let c2=0;c2<2*d;c2++) A[r2][c2]-=f*A[col][c2]; }
+  }
+  const se = []; for (let j=0;j<d;j++) se.push(Math.sqrt(Math.max(A[j][d+j],0)));
+  // McFadden pseudo-R2
+  let ll=0, ll0=0;
+  for (let r=0;r<n;r++){
+    let z=0; for(let j=0;j<d;j++) z+=w[j]*rows[r][j];
+    const p=1/(1+Math.exp(-z));
+    ll += ys[r]*Math.log(p+1e-12)+(1-ys[r])*Math.log(1-p+1e-12);
+    ll0 += ys[r]*Math.log(0.5)+(1-ys[r])*Math.log(0.5);
+  }
+  return {w:w, se:se, r2:1-ll/ll0, n:n};
+}
+function fitSession(sess){
+  const rows = [], ys = [];
+  sess.trials.forEach(t=>{
+    if (t.resp==='skip') return;
+    rows.push(diffVec(t.a, t.b));
+    ys.push(t.resp==='A'?1:0);
+  });
+  if (!rows.length) return null;
+  sess.fit = fitBT(rows, ys, priorVec(), 4);
+  return sess.fit;
+}
+
+/* ---------------- 7. veto + boundary + novelty analysis ---------------- */
+function analyzeVetoes(sess){
+  // a tag is a veto candidate if: picked against whenever present AND "neither" veto used
+  const veto = {};
+  MENU.forEach(m=>{ if(m.c!=='config') veto[m.t]={picked:0, shown:0, neither:0}; });
+  sess.trials.forEach(t=>{
+    ['a','b'].forEach(side=>{
+      const other = side==='a'?'b':'a';
+      Object.keys(t[side].tags).forEach(tag=>{
+        if (!veto[tag]) return;
+        veto[tag].shown++;
+        if (t.resp===side.toUpperCase()) veto[tag].picked++;
+        if (t.resp==='neither') veto[tag].neither++;
+      });
+    });
+  });
+  const out = [];
+  Object.keys(veto).forEach(tag=>{
+    const v = veto[tag];
+    if (v.shown>=3 && v.picked===0 && (v.neither>=2 || v.shown>=5))
+      out.push({tag:tag, shown:v.shown, neither:v.neither});
+  });
+  return out;
+}
+function analyzeNovelty(sess){
+  // discovery-phase trials he picked: novelty hits
+  const hits = [];
+  sess.trials.forEach(t=>{
+    if (t.phase!=='discover' || !t.resp || t.resp==='skip') return;
+    const picked = t.resp==='A'?t.a:t.b;
+    const fresh = Object.keys(picked.tags).filter(tag=>sess.cov0 && (sess.cov0.tag[tag]||0)<=1);
+    if (fresh.length) hits.push({trial:t.idx, picked:t.resp,
+      fresh:fresh.map(f=>TAG[f].label).join(', '), config:picked.config});
+  });
+  return hits;
+}
+
+/* ---------------- 8. session + persistence ---------------- */
+const LSKEY = 'scenario_lab_v1';
+function newSession(){
+  return {started:Date.now(), trials:[], cov:newCoverage(), cov0:null, fit:null, done:false};
+}
+function save(sess){ try{ localStorage.setItem(LSKEY, JSON.stringify(sess)); }catch(e){} }
+function load(){
+  try{ const s = localStorage.getItem(LSKEY); return s?JSON.parse(s):null; }catch(e){ return null; }
+}
+function recordResponse(sess, trial, resp){
+  trial.resp = resp;
+  sess.trials.push(trial);
+  coverScenario(sess.cov, trial.a, 1);
+  coverScenario(sess.cov, trial.b, 1);
+  if (sess.trials.length===PLAN.length){
+    sess.cov0 = JSON.parse(JSON.stringify(sess.cov)); // baseline cluster for novelty
+  }
+  if (sess.trials.length%3===0) fitSession(sess);
+  save(sess);
+}
+
+/* ---------------- 9. UI ---------------- */
+const app = (typeof document!=='undefined' && document.getElementById) ? document.getElementById('app') : null;
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function hud(sess, trial){
+  const n = trial.trial, total = trialCount();
+  return '<header class="hud"><h1>SCENARIO LAB <span class="dim">/ psychometric instrument</span></h1>'+
+    '<div class="sub">vocabulary: <span class="menu">Pornhub /categories</span> menu · forced choice · Bradley–Terry fit</div>'+
+    '<div id="prog"><div style="width:'+Math.round(100*n/total)+'%"></div></div>'+
+    '<div id="progText"><span>trial '+(n+1)+' of '+total+'</span><span>'+trial.phase+'</span></div></header>';
+}
+function cardHTML(sc, side, novelTags){
+  const tags = [];
+  const fr = sc.fram.map(f=>'<span class="tg">'+esc(TAG[f].label)+'</span>').join('');
+  if (sc.set) tags.push('<span class="tg">'+esc(TAG[sc.set].label)+'</span>');
+  const cfgCls = 'tg cfg' + (novelTags&&novelTags.includes(sc.config)?' new':'');
+  tags.push('<span class="'+cfgCls+'">'+esc(TAG[sc.config].label)+'</span>');
+  sc.acts.forEach(a=>{
+    const nv = novelTags&&novelTags.includes(a)?' new':'';
+    tags.push('<span class="tg'+nv+'">'+esc(TAG[a].label)+'</span>');
+  });
+  if (sc.intl) tags.push('<span class="tg'+(novelTags&&novelTags.includes(sc.intl)?' new':'')+'">'+esc(TAG[sc.intl].label)+'</span>');
+  const lines = sc.lines.map(l=>'<div class="bl">'+l.html+'</div>').join('');
+  return '<button class="card" data-side="'+side+'"><div class="tags">'+fr+tags.join('')+'</div>'+lines+'</button>';
+}
+function novelTags(sess){
+  if (!sess.cov0) return [];
+  return Object.keys(sess.cov0.tag).filter(t=>(sess.cov0.tag[t]||0)<=1);
+}
+function showIntro(sess){
+  app.innerHTML =
+    '<header class="hud"><h1>SCENARIO LAB <span class="dim">/ psychometric instrument</span></h1>'+
+    '<div class="sub">vocabulary: <span class="menu">Pornhub /categories</span> menu · '+
+    'forced choice · no 1–10 ratings · Bradley–Terry part-worths</div></header>'+
+    '<p>You\'ll see <b>'+trialCount()+'</b> pairs. Pick the one that does it for you more. '+
+    'That\'s the whole test — one tap per screen.</p>'+
+    '<p class="note">The scenarios are built from a real tube site\'s category menu — '+
+    'the same vocabulary as the search bar, not a lab\'s guess at it. '+
+    'Categories are 18+ fantasy; everybody in every scenario is an adult.</p>'+
+    '<p class="note"><b>"Want neither"</b> = both are dead to you. Use it when you mean it — '+
+    'that\'s how the instrument finds hard vetoes. <b>Skip</b> = unclear, don\'t count it.</p>'+
+    (sess && sess.trials.length ?
+      '<button class="btn" id="resume">RESUME — trial '+(sess.trials.length+1)+'</button>'+
+      '<button class="btn ghost" id="restart">start over</button>' :
+      '<button class="btn" id="start">START</button>');
+  const go = ()=>{ if(!sess||!sess.trials.length) sess=newSession(); showTrial(sess); };
+  const b = document.getElementById(sess&&sess.trials.length?'resume':'start');
+  if (b) b.onclick = go;
+  const rs = document.getElementById('restart');
+  if (rs) rs.onclick = ()=>{ sess=newSession(); save(sess); showTrial(sess); };
+}
+function showTrial(sess){
+  const trial = nextTrial(sess);
+  trial.trial = sess.trials.length;
+  const nv = novelTags(sess);
+  app.innerHTML = hud(sess, trial)+
+    '<div class="phase">'+esc(trial.phase.toUpperCase())+'</div>'+
+    '<div class="q">Which one does it for you more?</div>'+
+    cardHTML(trial.a,'A',nv)+cardHTML(trial.b,'B',nv)+
+    '<div class="row3"><button id="neither">want neither</button>'+
+    '<button id="skip">skip</button>'+
+    '<button id="end">finish early</button></div>';
+  app.querySelectorAll('.card').forEach(c=>{
+    c.onclick = ()=>{ recordResponse(sess, trial, c.dataset.side);
+      sess.trials.length>=trialCount() ? finish(sess) : showTrial(sess); };
+  });
+  document.getElementById('neither').onclick = ()=>{ recordResponse(sess, trial, 'neither');
+    sess.trials.length>=trialCount() ? finish(sess) : showTrial(sess); };
+  document.getElementById('skip').onclick = ()=>{ recordResponse(sess, trial, 'skip');
+    sess.trials.length>=trialCount() ? finish(sess) : showTrial(sess); };
+  document.getElementById('end').onclick = ()=>{ if (sess.trials.length>=15) finish(sess); };
+}
+function fmtW(w, se){
+  const cls = w<0?'neg':'';
+  const z = Math.abs(w)/se;
+  const tier = z>1.96 ? '' : (z>1 ? ' · likely' : ' · unresolved');
+  return '<span class="w '+cls+'">'+(w>=0?'+':'')+w.toFixed(2)+'</span> '+
+    '<span class="se">±'+se.toFixed(2)+tier+'</span>';
+}
+function finish(sess){
+  sess.done = true; fitSession(sess); save(sess);
+  const fit = sess.fit, vetoes = analyzeVetoes(sess), hits = analyzeNovelty(sess);
+  const usable = sess.trials.filter(t=>t.resp!=='skip').length;
+  // rank tags by weight
+  const tagRows = [];
+  DIMS.forEach((d,i)=>{
+    if (d.kind==='cfg' && d.key===CFG_REF) return;
+    tagRows.push({label:d.label, kind:d.kind, w:fit.w[i], se:fit.se[i]});
+  });
+  tagRows.sort((a,b)=>b.w-a.w);
+  const KINDN = {cfg:'CONFIG', act:'ACT', intl:'INTENSITY', fram:'FRAMING', set:'SETTING', st:'STRUCT'};
+  let h = '<header class="hud"><h1>SCENARIO LAB <span class="dim">/ results</span></h1>'+
+    '<div class="sub">'+usable+' usable trials · pseudo-R² '+fit.r2.toFixed(2)+
+    ' · config weights relative to MMF baseline</div></header>';
+  if (fit.r2 < 0.05)
+    h += '<p class="note" style="border:1px solid var(--gold);border-radius:10px;padding:12px 14px;">'+
+      'Heads up: your picks weren\'t well predicted by the menu dimensions (R² ≈ '+fit.r2.toFixed(2)+'). '+
+      'That means the choices were inconsistent, or what moves you lives outside this tag set — '+
+      'either way, treat the weights below as suggestive, not settled.</p>';
+  h += '<h3 class="sec">TAG PART-WORTHS (β ± SE, ridge-penalized)</h3>';
+  let lastKind = null;
+  tagRows.forEach(r=>{
+    if (r.kind!==lastKind){ h+='<div class="note" style="margin-top:12px;color:var(--gold)">'+KINDN[r.kind]+'</div>'; lastKind=r.kind; }
+    const cls = r.w<0?'neg':'';
+    const pw = Math.abs(r.w)/ (Math.max(...tagRows.map(x=>Math.abs(x.w)))||1);
+    h += '<div class="trow"><div class="nm"><span>'+esc(r.label)+'</span>'+fmtW(r.w,r.se)+'</div>'+
+      '<div class="tr"><div class="fl '+cls+'" style="left:'+(r.w<0?(50-50*pw):50)+'%;width:'+(50*pw)+'%"></div></div></div>';
+  });
+  h += '<h3 class="sec">HARD VETOES</h3>';
+  if (vetoes.length) vetoes.forEach(v=>{
+    h += '<div class="vetoBox"><b>VETO: '+esc(TAG[v.tag].label)+'</b> — picked 0 of '+v.shown+
+      ' times shown'+(v.neither?', "want neither" used '+v.neither+'×':'')+'.</div>';
+  });
+  else h += '<p class="note">None established. Nothing you saw got a hard no.</p>';
+  h += '<h3 class="sec">NOVELTY HITS (discovery phase picks)</h3>';
+  if (hits.length) hits.forEach(x=>{
+    h += '<div class="hitBox"><b>'+esc(x.fresh)+'</b> — picked in a discovery trial '+
+      '(config: '+esc(x.config)+'). The menu found something new.</div>';
+  });
+  else h += '<p class="note">None. Everything new you were shown lost to home base.</p>';
+  h += '<h3 class="sec">READOUT</h3>';
+  const est = tagRows.filter(r=>Math.abs(r.w)>1.96*r.se);
+  const lik = tagRows.filter(r=>{const z=Math.abs(r.w)/r.se; return z>1 && z<=1.96;});
+  const drv = a=>a.filter(r=>r.w>0).map(r=>r.label);
+  const rep = a=>a.filter(r=>r.w<0).map(r=>r.label);
+  h += '<p class="note"><b>Established</b> (|β|&gt;1.96·SE) drivers: <b>'+
+    esc(drv(est).slice(0,5).join(' · ')||'none yet')+'</b><br>'+
+    'Established repellents: <b>'+esc(rep(est).slice(0,5).join(' · ')||'none yet')+'</b><br>'+
+    '<b>Likely</b> (|β|&gt;SE) drivers: '+esc(drv(lik).slice(0,6).join(' · ')||'—')+'<br>'+
+    'Likely repellents: '+esc(rep(lik).slice(0,6).join(' · ')||'—')+'<br>'+
+    'Everything else is unresolved at '+usable+' trials — the SE is bigger than the estimate. '+
+    'Run it again and the likely tier firms up.</p>';
+  h += '<h3 class="sec">EXPORT</h3><button class="btn" id="exp">COPY scenario_instrument/v1 JSON</button>'+
+    '<pre class="exp" id="expv" style="display:none"></pre>'+
+    '<button class="btn ghost" id="again">run it again</button>';
+  app.innerHTML = h;
+  document.getElementById('exp').onclick = ()=>{
+    const j = buildExport(sess);
+    const v = document.getElementById('expv');
+    v.style.display='block'; v.textContent = JSON.stringify(j, null, 1);
+    if (navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(j));
+  };
+  document.getElementById('again').onclick = ()=>{
+    const s = newSession(); save(s); showTrial(s);
+  };
+}
+function buildExport(sess){
+  const fit = sess.fit;
+  const partworths = {};
+  DIMS.forEach((d,i)=>{ partworths[d.kind+':'+d.key] = {label:d.label, beta:+fit.w[i].toFixed(4), se:+fit.se[i].toFixed(4)}; });
+  return {
+    instrument:'scenario_instrument/v1', exported:new Date().toISOString(),
+    vocabulary:{grounding:'Pornhub /categories taxonomy (96 categories, observed 2026-06-27)',
+      note:'config/act/intensity/framing/setting tags map to ph category ids; structural layer is lab-built from scenario-ratings v1'},
+    session:{started:new Date(sess.started).toISOString(),
+      trials:sess.trials.length,
+      usable:sess.trials.filter(t=>t.resp!=='skip').length,
+      neither:sess.trials.filter(t=>t.resp==='neither').length,
+      skipped:sess.trials.filter(t=>t.resp==='skip').length},
+    fit:{pseudo_r2:+fit.r2.toFixed(4), lambda:4, config_reference:CFG_REF,
+      partworths:partworths},
+    vetoes:analyzeVetoes(sess),
+    novelty_hits:analyzeNovelty(sess),
+    trials:sess.trials.map(t=>({idx:t.idx, phase:t.phase, resp:t.resp,
+      a:{config:t.a.config, acts:t.a.acts, intl:t.a.intl, fram:t.a.fram, set:t.a.set, struct:t.a.struct},
+      b:{config:t.b.config, acts:t.b.acts, intl:t.b.intl, fram:t.b.fram, set:t.b.set, struct:t.b.struct}})),
+  };
+}
+/* ---------------- 10. self-test (node) + boot ---------------- */
+var SL = {MENU:MENU, TAG:TAG, CONFIGS:CONFIGS, ACTS:ACTS, INTLS:INTLS, FRAMS:FRAMS, SETS:SETS,
+  STRUCT:STRUCT, COHERENT:COHERENT, PRIORS:PRIORS, DIMS:DIMS, DPOS:DPOS,
+  genScenario:genScenario, cloneScenario:cloneScenario, hotScenario:hotScenario,
+  coldScenario:coldScenario, encode:encode, diffVec:diffVec, fitBT:fitBT,
+  newSession:newSession, recordResponse:recordResponse, nextTrial:nextTrial,
+  fitSession:fitSession, analyzeVetoes:analyzeVetoes, analyzeNovelty:analyzeNovelty,
+  buildExport:buildExport, trialCount:trialCount, coherentActs:coherentActs,
+  coherentConfigForAct:coherentConfigForAct, sampleActs:sampleActs};
+function boot(){
+  const s = load();
+  if (s && s.done){ showIntro(s); } else showIntro(s);
+}
+if (typeof document !== 'undefined' && document.getElementById) boot();
+</script>
+</body>
+</html>

@@ -60,17 +60,36 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   }
 
   async function fetchBuf(url, expected, onp) {
-    const r = await fetch(url);
+    const ctrl = new AbortController();
+    const r = await fetch(url, { signal: ctrl.signal });
     if (!r.ok) throw new Error('fetch failed: ' + url + ' (' + r.status + ')');
     const total = +(r.headers.get('content-length') || expected || 0);
     const reader = r.body.getReader();
     const chunks = [];
-    let got = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value); got += value.length;
-      onp(got, total);
+    let got = 0, lastMove = Date.now(), stalled = false;
+    // A dead connection used to hang the progress bar forever (the 174MB
+    // recognition model stalled at ~9% on cellular). Abort after 45s with
+    // zero bytes so the user gets an error, not a frozen bar.
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastMove > 45000) {
+        stalled = true;
+        clearInterval(watchdog);
+        try { reader.cancel(); } catch (e) {}
+        ctrl.abort();
+      }
+    }, 5000);
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); got += value.length; lastMove = Date.now();
+        onp(got, total);
+      }
+    } catch (e) {
+      if (stalled) throw new Error('download stalled (no data for 45s): ' + url);
+      throw e;
+    } finally {
+      clearInterval(watchdog);
     }
     const buf = new Uint8Array(got);
     let o = 0;
@@ -78,10 +97,23 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     return buf;
   }
 
-  async function loadKinship(onp) {
-    const total = KIN_SIZES.det + KIN_SIZES.ga + KIN_SIZES.rec;
+  const T = (data, dims) => new ort.Tensor('float32', data, dims);
+  const wrap = s => ({
+    run: feeds => queuedRun(() => {
+      const real = {};
+      for (const [k, v] of Object.entries(feeds)) real[k] = T(v.data, v.dims);
+      return s.run(real);
+    }),
+  });
+
+  // Stage 1 (upload): det + gender/age only — both local, ~18MB, fast.
+  // The 174MB HuggingFace recognition model loads lazily via ensureRec(),
+  // only when an instrument actually needs a face embedding (age 2nd
+  // opinion, kinship). Eagerly fetching it blocked every upload on it.
+  async function loadDetect(onp) {
+    const total = KIN_SIZES.det + KIN_SIZES.ga;
     let done = 0;
-    const seen = { det: 0, ga: 0, rec: 0 };
+    const seen = { det: 0, ga: 0 };
     const prog = (key, got) => {
       done += got - seen[key]; seen[key] = got;
       onp(done / total);
@@ -90,23 +122,32 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       const buf = await fetchBuf(url, KIN_SIZES[key], g => prog(key, g));
       return ort.InferenceSession.create(buf);
     };
-    const [det, ga, rec] = await Promise.all(
-      ['det', 'ga', 'rec'].map(k => mk(k, KIN_URLS[k])));
-    const T = (data, dims) => new ort.Tensor('float32', data, dims);
-    const wrap = s => ({
-      run: feeds => queuedRun(() => {
-        const real = {};
-        for (const [k, v] of Object.entries(feeds)) real[k] = T(v.data, v.dims);
-        return s.run(real);
-      }),
-    });
-    kSessions = { det: wrap(det), rec: wrap(rec), ga: wrap(ga) };
+    const [det, ga] = await Promise.all(['det', 'ga'].map(k => mk(k, KIN_URLS[k])));
+    kSessions = { det: wrap(det), ga: wrap(ga) };
     kNames = {
       detIn: det.inputNames[0], detOut: det.outputNames,
-      recIn: rec.inputNames[0], recOut: rec.outputNames[0],
       gaIn: ga.inputNames[0], gaOut: ga.outputNames[0],
     };
     kinshipReady = true;
+  }
+
+  // Stage 2 (lazy): the remote recognition model. Single shared promise so
+  // concurrent embedding requests don't double-download; resets on failure
+  // so a stall error is retryable.
+  let recPromise = null;
+  function ensureRec(onp) {
+    if (kSessions.rec) return Promise.resolve();
+    if (!recPromise) {
+      recPromise = (async () => {
+        const buf = await fetchBuf(KIN_URLS.rec, KIN_SIZES.rec,
+          (got, total) => onp && onp(total ? got / total : 0));
+        const rec = await ort.InferenceSession.create(buf);
+        kSessions.rec = wrap(rec);
+        kNames.recIn = rec.inputNames[0];
+        kNames.recOut = rec.outputNames[0];
+      })().catch(e => { recPromise = null; throw e; });
+    }
+    return recPromise;
   }
 
   async function loadAge(onStatus) {
@@ -271,8 +312,14 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   }
 
   async function embeddingFor(idx) {
-    if (!embedCache[idx])
+    if (!embedCache[idx]) {
+      // Recognition model loads here, on demand — progress goes to runstate.
+      await ensureRec(p => {
+        $('runstate').textContent = 'loading face-recognition model (174MB, one-time)… ' +
+          (p * 100).toFixed(0) + '%';
+      });
       embedCache[idx] = await P.embedFace(kSessions, kNames, photo.rgb, photo.w, photo.h, faces[idx]);
+    }
     return embedCache[idx];
   }
 
@@ -393,7 +440,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       faces = []; embedCache = {}; faceA = 0; faceB = 1;
       if (!kinshipReady) {
         setBar(0, 'loading detection models…');
-        await loadKinship(pct => setBar(pct, 'loading detection models… ' + (pct * 100).toFixed(0) + '%'));
+        await loadDetect(pct => setBar(pct, 'loading detection models… ' + (pct * 100).toFixed(0) + '%'));
         setBar(1, 'detection models ready — everything runs on your device');
       }
       $('runstate').textContent = 'detecting faces…';
