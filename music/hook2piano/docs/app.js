@@ -14,6 +14,39 @@ const $ = id => document.getElementById(id);
 const statusEl = $("status"), chipsEl = $("chips"),
        scoreEl = $("score"), actionsEl = $("actions");
 
+/* ---------- bookmarklet (single source of truth) ----------
+ * Same-origin DOM access: reads the tab list straight from the TheoryTab
+ * page, so it needs no relay at all. The hint link href + copy buttons
+ * are wired from this string at init. */
+const BOOKMARKLET = `javascript:(function(){var h=document.documentElement.innerHTML,out=[],seen={},re=/<div id="tab-([^"]+)">/g,m;while((m=re.exec(h))){var tid=m[1];if(seen[tid])continue;seen[tid]=1;var b=h.slice(Math.max(0,m.index-3000),m.index),ts=[],tm,tr=/>(([^<>]{1,60}))</g;while((tm=tr.exec(b))){var t=tm[1].trim();if(t&&t.indexOf('Open In Hookpad')<0)ts.push(t)}var name=ts.length?ts[ts.length-1]:'Tab';if(name.indexOf('\u2013')>=0)name=name.split('\u2013').pop().trim();else if(name.indexOf(' - ')>=0)name=name.split(' - ').pop().trim();out.push(encodeURIComponent(name)+':'+tid)}if(!out.length){alert('hook2piano: no tabs found on this page');return}open('https://danfr4nk.github.io/tools/music/hook2piano/docs/?tabs='+out.join(','),'_blank')})()`;
+
+async function copyBookmarklet(okEl){
+  const done = ()=>{ if(okEl){ okEl.style.display = "inline";
+    setTimeout(()=>{ okEl.style.display = "none"; }, 4000); } };
+  try { await navigator.clipboard.writeText(BOOKMARKLET); done(); return; }
+  catch(e){
+    const ta = document.createElement("textarea");
+    ta.value = BOOKMARKLET; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); done(); } catch(e2){}
+    ta.remove();
+  }
+}
+
+function showRelayPanel(){
+  statusEl.innerHTML =
+    '<div class="relaypanel"><b>hooktheory is blocking the relay (rate-limited) ' +
+    '&mdash; pasting links is down for now.</b><br>' +
+    'On your phone the reliable path is the bookmarklet: it reads the tab list ' +
+    'straight from the TheoryTab page, no relay involved.<br>' +
+    '<div class="btnrow"><button class="ghost" id="bmcopy2" type="button">Copy bookmarklet</button> ' +
+    '<span class="copied" id="bmok2">copied &mdash; paste it into the bookmark&rsquo;s address field</span></div>' +
+    '<ol><li>In Safari: Share &rarr; Add Bookmark (any page).</li>' +
+    '<li>Bookmarks &rarr; Edit &rarr; tap it &rarr; clear the address field &rarr; paste &rarr; name it &#9889; hook2piano.</li>' +
+    '<li>On any TheoryTab page, tap the address bar, type &ldquo;hook2piano&rdquo;, tap the bookmark &mdash; the sheet loads here.</li></ol></div>';
+  $("bmcopy2").onclick = ()=>copyBookmarklet($("bmok2"));
+}
+
 function setStatus(t) { statusEl.textContent = t || ""; }
 
 /* ---------- input parsing ---------- */
@@ -66,13 +99,13 @@ async function fetchViewHtml(url) {
     }
   } catch (e) { /* CORS — fall through to proxies */ }
   const enc = encodeURIComponent(url);
-  // NOTE 2026-09-16: hooktheory.com sends no ACAO header, so the direct
-  // fetch above always fails in-browser. Public relays are unreliable:
-  // allorigins.win down, corsproxy.io 401s without a key, codetabs 522s,
-  // corsfix 400s, cloudflare's demo worker + api.cors.lol rate-limit hard.
-  // api.cors.lol is the only one ever observed working — keep it as the
-  // single best-effort attempt, then point at the bookmarklet (same-origin
-  // DOM access needs no relay at all).
+  // NOTE 2026-09-18: hooktheory.com sends no ACAO header, so the direct
+  // fetch above always fails in-browser. Public relays are ALL dead or
+  // rate-limited now: api.cors.lol hard-429s, allorigins/codetabs 522,
+  // corsproxy.io 401s without a key, isomorphic-git 403s, and hooktheory
+  // itself 429s proxy IPs (cors.eu.org). api.cors.lol stays as one
+  // best-effort attempt (it worked 2026-09-16). On failure the caller shows
+  // the bookmarklet panel — same-origin DOM access needs no relay at all.
   const proxies = [
     "https://api.cors.lol/?url=" + enc,
   ];
@@ -85,8 +118,7 @@ async function fetchViewHtml(url) {
       }
     } catch (e) { /* try next */ }
   }
-  throw new Error("relay couldn't reach hooktheory — open the TheoryTab page " +
-    "and tap the hook2piano bookmarklet instead (no relay needed)");
+  throw new Error("RELAY_FAILED");
 }
 
 /* ---------- project JSON (direct; api.hooktheory.com sends CORS *) ---------- */
@@ -190,7 +222,8 @@ async function onLoad() {
     setStatus(sections.length > 1 ? "pick a section" : "rendering\u2026");
     await selectSection(0);
   } catch (e) {
-    setStatus("error: " + e.message);
+    if (e && e.message === "RELAY_FAILED") showRelayPanel();
+    else setStatus("error: " + e.message);
   } finally {
     $("load").disabled = false;
   }
@@ -198,6 +231,14 @@ async function onLoad() {
 
 $("load").onclick = onLoad;
 $("url").addEventListener("keydown", e => { if (e.key === "Enter") onLoad(); });
+
+/* bookmarklet link + copy buttons (hint) */
+(function(){
+  const link = $("bmlink");
+  if (link) link.href = BOOKMARKLET;
+  const c = $("bmcopy");
+  if (c) c.onclick = ()=>copyBookmarklet($("bmok"));
+})();
 $("print").onclick = () => window.print();
 $("tplay").onclick = () => { if (window.H2P && H2P.player) H2P.player.toggle(); };
 $("tstop").onclick = () => { if (window.H2P && H2P.player) H2P.player.stop(); };
