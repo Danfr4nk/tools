@@ -103,10 +103,11 @@ async function fetchViewHtml(url) {
   // fetch above always fails in-browser. Public relays are ALL dead or
   // rate-limited now: api.cors.lol hard-429s, allorigins/codetabs 522,
   // corsproxy.io 401s without a key, isomorphic-git 403s, and hooktheory
-  // itself 429s proxy IPs (cors.eu.org). api.cors.lol stays as one
-  // best-effort attempt (it worked 2026-09-16). On failure the caller shows
-  // the bookmarklet panel — same-origin DOM access needs no relay at all.
+  // itself 429s proxy IPs (cors.eu.org). The perma fix: our own Apps Script
+  // relay (hook2piano-relay, dfrank88's Google account, "Anyone" access) —
+  // first in line, api.cors.lol stays as the fallback.
   const proxies = [
+    "https://script.google.com/macros/s/AKfycbw7kEOABWrz29CSTvg7tUWbifuaneDXICJ87UThzEyjKJeOEBZcAbpkWjWgFL1H3cMT/exec?url=" + enc,
     "https://api.cors.lol/?url=" + enc,
   ];
   for (const p of proxies) {

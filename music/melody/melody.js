@@ -6,9 +6,15 @@
 //   2. per frame: FFT magnitude spectrum
 //   3. pitch salience(m) = sum over harmonics h of w_h * |X(bin(f0(m)*h))|
 //      over MIDI 36..96, with a mild lead-band emphasis (melodies live midrange)
-//   4. argmax + octave-down preference (kills octave-up errors)
-//   5. voicing via adaptive salience/RMS thresholds
-//   6. median smoothing + note segmentation (quantize, min-duration, gap-merge)
+//   4. argmax + explaining-away penalty (bass stealing the melody) +
+//      octave disambiguation by harmonic spectral evidence, then parabolic
+//      interpolation of the salience peak for sub-semitone f0 (vibrato stays
+//      continuous instead of becoming a square wave on the MIDI grid)
+//   5. voicing via adaptive salience/RMS thresholds + harmonicity gate
+//      (the winning pitch must explain a share of the frame's spectrum —
+//      broadband percussion/noise fails this and goes unvoiced)
+//   6. median smoothing + hysteresis note segmentation (0.6-semitone deadband,
+//      2-frame confirmation: vibrato rides through, real steps cut cleanly)
 //
 // export: extractMelody(monoFloat32, sampleRate, onProgress) -> Promise<{notes, duration, stats}>
 
@@ -160,7 +166,18 @@ export async function extractMelody(mono, sampleRate, onProgress) {
   const f0 = new Float32Array(nFrames).fill(NaN);
   const sal = new Float32Array(nFrames);
   const rms = new Float32Array(nFrames);
+  const harm = new Float32Array(nFrames); // harmonic energy fraction of winner
 
+  // Two passes. Pass 1 (heavy): per-frame spectrum, salience, penalized
+  // salience, harmonic-energy fractions — stored, no decisions yet.
+  // Pass 2 (cheap): median-smooth the penalized salience over +-2 frames
+  // BEFORE argmax. This is the vibrato fix at the right level: with a 93ms
+  // window and 5-6Hz vibrato, each frame averages half a vibrato cycle, so
+  // per-frame pitch decisions are bimodal garbage. Averaging the salience
+  // *distributions* recovers a stable peak at the vibrato center; voting on
+  // quantized per-frame *decisions* cannot.
+  const penAll = new Float64Array(nFrames * nC);
+  const harmAll = new Float32Array(nFrames * nC);
   const CHUNK = 256;
   for (let f0idx = 0; f0idx < nFrames; f0idx++) {
     const off = f0idx * HOP;
@@ -196,30 +213,112 @@ export async function extractMelody(mono, sampleRate, onProgress) {
       }
       pen[c] = salAll[c] - 0.85 * mx;
     }
-    let bi = 0;
-    for (let c = 1; c < nC; c++) if (pen[c] > pen[bi]) bi = c;
-    // single octave-down check on penalized salience: if the octave below
-    // the winner is nearly as strong on its own merits, the winner was an
-    // octave-up error (strong 2nd harmonic) — take the lower.
-    if (bi >= 12 && pen[bi - 12] >= 0.55 * pen[bi]) bi -= 12;
-    const bestPen = pen[bi];
-    f0[f0idx] = cands[bi].f0;
-    sal[f0idx] = bestPen > 0 ? bestPen : 0;
+    penAll.set(pen, f0idx * nC);
+    // harmonic energy fraction per candidate (for the octave tiebreak and
+    // the voicing gate in pass 2)
+    let totalE = 0;
+    for (let k = 0; k <= N / 2; k++) totalE += mag[k] * mag[k];
+    const hb = f0idx * nC, invE = 1 / (totalE || 1);
+    for (let c = 0; c < nC; c++) {
+      const hh = cands[c].harm;
+      let he = 0;
+      const nh = Math.min(hh.length, 6);
+      for (let j = 0; j < nh; j++) he += mag[hh[j][0]] * mag[hh[j][0]];
+      harmAll[hb + c] = he * invE;
+    }
     if (onProgress && (f0idx % CHUNK === 0)) {
-      onProgress(f0idx / nFrames * 0.85);
+      onProgress(f0idx / nFrames * 0.72);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  if (onProgress) onProgress(0.74);
+
+  // Pass 2: decide pitch per frame from salience averaged over +-2 frames.
+  // (232ms covers ~1.3 cycles of 5.5Hz vibrato.) The average must be a MEAN,
+  // not a median: with a 93ms window each frame sees half a vibrato cycle,
+  // so per-frame pitch estimates are bimodal (dwelling at the vibrato
+  // extremes). Averaging the salience *distributions* recovers a symmetric
+  // peak at the vibrato center; a median just votes for one extreme.
+  // Note the split responsibility: PITCH comes from the averaged salience
+  // (vibrato-stable), but VOICING/confidence use the RAW per-frame salience.
+  // Averaged salience lets gap frames borrow energy from neighboring lead
+  // frames — voicing on it would resurrect gaps as phantom notes with
+  // arbitrary interpolated pitches.
+  const SM_RAD = 2;
+  const penS = new Float64Array(nC);
+  for (let f = 0; f < nFrames; f++) {
+    const ro = f * nC;
+    // raw winner: "is there a lead here?" (for voicing)
+    let rbi = 0;
+    for (let c = 1; c < nC; c++) if (penAll[ro + c] > penAll[ro + rbi]) rbi = c;
+    const rawBest = penAll[ro + rbi];
+    // averaged winner: "which pitch?" (for f0 — vibrato-stable)
+    const w0 = Math.max(0, f - SM_RAD), w1 = Math.min(nFrames - 1, f + SM_RAD);
+    const nw = w1 - w0 + 1, inv = 1 / nw;
+    for (let c = 0; c < nC; c++) {
+      let s = 0;
+      for (let w = w0; w <= w1; w++) s += penAll[w * nC + c];
+      penS[c] = s * inv;
+    }
+    let bi = 0;
+    for (let c = 1; c < nC; c++) if (penS[c] > penS[bi]) bi = c;
+    // neighbor-max harmonicity (stable under vibrato dither)
+    const hb = f * nC;
+    const harmN = (c) => {
+      if (c < 0 || c >= nC) return 0;
+      const a = c > 0 ? harmAll[hb + c - 1] : 0;
+      const b = harmAll[hb + c];
+      const d = c < nC - 1 ? harmAll[hb + c + 1] : 0;
+      return Math.max(a, b, d);
+    };
+    // octave disambiguation: the lower octave's harmonic bins are a superset
+    // of the upper's, so it always explains >= as much spectrum. Take the
+    // lower only when it explains clearly MORE (a real fundamental plus odd
+    // harmonics is present) — this kills octave-up errors from a strong 2nd
+    // harmonic without dragging genuine high notes down to a subharmonic
+    // ghost.
+    if (bi >= 12 && penS[bi - 12] >= 0.6 * penS[bi] && harmN(bi - 12) > 1.3 * harmN(bi)) {
+      bi -= 12;
+    }
+    // parabolic interpolation of the salience peak -> sub-semitone f0
+    let frac = 0;
+    if (bi > 0 && bi < nC - 1) {
+      const a = penS[bi - 1], b = penS[bi], cc = penS[bi + 1];
+      const denom = a - 2 * b + cc;
+      if (denom < 0) frac = Math.max(-0.5, Math.min(0.5, 0.5 * (a - cc) / denom));
+    }
+    f0[f] = cands[bi].f0 * Math.pow(2, frac / 12);
+    sal[f] = rawBest > 0 ? rawBest : 0;
+    harm[f] = harmN(bi);
+    if (onProgress && (f % CHUNK === 0)) {
+      onProgress(0.74 + f / nFrames * 0.11);
       await new Promise(r => setTimeout(r, 0));
     }
   }
   if (onProgress) onProgress(0.87);
 
-  // voicing: adaptive thresholds from p95 of salience & rms
+  // voicing: adaptive thresholds from p95 of salience & rms, plus a
+  // harmonicity gate — the winning pitch must explain a real share of the
+  // frame's spectrum. Broadband junk (snare/hat hits, vinyl crackle, noise)
+  // can spike salience at a random candidate but explains almost nothing;
+  // the gate drops those frames to unvoiced instead of phantom notes.
+  // The gate threshold self-calibrates from confident frames, and very
+  // strong salience overrides it (a confident pitch is transcribed even
+  // through a dense backing).
   const salS = Array.from(sal).sort((a, b) => a - b);
   const rmsS = Array.from(rms).sort((a, b) => a - b);
-  const salT = 0.22 * percentile(salS, 0.95);
+  const p95sal = percentile(salS, 0.95);
+  const salT = 0.22 * p95sal;
   const rmsT = 0.04 * percentile(rmsS, 0.95);
+  const confH = [];
+  for (let i = 0; i < nFrames; i++) if (sal[i] > 0.5 * p95sal) confH.push(harm[i]);
+  confH.sort((a, b) => a - b);
+  const harmT = Math.min(0.28, Math.max(0.08,
+    0.35 * (confH.length ? confH[confH.length >> 1] : 0.3)));
   const voiced = new Uint8Array(nFrames);
   for (let i = 0; i < nFrames; i++) {
-    voiced[i] = (sal[i] > salT && rms[i] > rmsT) ? 1 : 0;
+    voiced[i] = (sal[i] > salT && rms[i] > rmsT &&
+      (harm[i] > harmT || sal[i] > 0.6 * p95sal)) ? 1 : 0;
   }
 
   // drop voiced blips shorter than ~115ms
@@ -238,29 +337,56 @@ export async function extractMelody(mono, sampleRate, onProgress) {
   const sm = medianSmooth(f0s, 3);
   if (onProgress) onProgress(0.92);
 
-  // quantize + segment into notes
+  // hysteresis segmentation on the smoothed continuous pitch track.
+  // A note holds until the pitch sits >0.6 semitone from the note's running
+  // mean for 2 consecutive frames (~92ms), then cuts cleanly. Vibrato
+  // (±a semitone at 5-6Hz) is already attenuated by the median smoother and
+  // rides inside the deadband instead of splitting the note; genuine steps
+  // and octave jumps cut within ~90ms; slow glides get absorbed into the
+  // nearer side instead of spawning intermediate fragment notes.
   const frameDur = HOP / sr;
-  const midiOf = new Int16Array(nFrames);
+  const cmidi = new Float32Array(nFrames);
   for (let i = 0; i < nFrames; i++) {
-    midiOf[i] = voiced[i] && !Number.isNaN(sm[i])
-      ? Math.round(69 + 12 * Math.log2(sm[i] / 440))
-      : -1;
+    cmidi[i] = (voiced[i] && !Number.isNaN(sm[i]))
+      ? 69 + 12 * Math.log2(sm[i] / 440) : NaN;
   }
+  const HYST = 0.6, CONFIRM = 2;
   const MIN_NOTE = 0.09, MERGE_GAP = 0.08;
   const raw = [];
-  for (let i = 0; i < nFrames;) {
-    if (midiOf[i] < 0) { i++; continue; }
-    let j = i;
-    while (j < nFrames && midiOf[j] === midiOf[i]) j++;
-    const start = i * frameDur, dur = (j - i) * frameDur;
-    if (dur >= MIN_NOTE) {
-      // confidence = mean normalized salience
+  let cur = null, pend = 0;
+  function closeNote(endFrame) {
+    const n = endFrame - cur.start;
+    const dur = n * frameDur;
+    if (dur >= MIN_NOTE && n > 0) {
+      const midi = Math.round(cur.sum / cur.n);
       let ssum = 0;
-      for (let k = i; k < j; k++) ssum += sal[k];
-      raw.push({ midi: midiOf[i], start, dur, conf: ssum / (j - i) / (percentile(salS, 0.95) || 1) });
+      for (let k = cur.start; k < endFrame; k++) ssum += sal[k];
+      raw.push({
+        midi, start: cur.start * frameDur, dur,
+        conf: ssum / n / (p95sal || 1),
+      });
     }
-    i = j;
+    cur = null;
   }
+  for (let i = 0; i < nFrames; i++) {
+    const m = cmidi[i];
+    if (Number.isNaN(m)) { pend = 0; if (cur) closeNote(i); continue; }
+    if (!cur) { cur = { sum: m, n: 1, start: i }; continue; }
+    if (Math.abs(m - cur.sum / cur.n) > HYST) {
+      if (++pend >= CONFIRM) {
+        const ns = i - CONFIRM + 1; // new note starts at first deviant frame
+        closeNote(ns);
+        cur = { sum: 0, n: 0, start: ns };
+        for (let k = ns; k <= i; k++) { cur.sum += cmidi[k]; cur.n++; }
+        pend = 0;
+      }
+      // held-out outlier frame: belongs to neither note yet
+    } else {
+      pend = 0;
+      cur.sum += m; cur.n++;
+    }
+  }
+  if (cur) closeNote(nFrames);
   // merge same-pitch notes separated by tiny gaps
   const notes = [];
   for (const nt of raw) {
