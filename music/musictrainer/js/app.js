@@ -19,7 +19,7 @@ function load(){
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
 function week(){ return state.weeks.find(w=>w.id===state.currentWeekId); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function fmtDate(iso){ try{ return new Date(iso).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}); }catch(e){ return ""; } }
+function fmtDate(iso){ try{ const d = new Date(iso); if(isNaN(d)) return ""; return d.toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}); }catch(e){ return ""; } }
 
 /* ---------- parsing ---------- */
 const ID_RE = /(?:open\.spotify\.com\/track\/|spotify:track:)([A-Za-z0-9]{22})/;
@@ -204,7 +204,7 @@ function renderWeek(){
       <div class="prog"><i style="width:${w.tracks.length?nsc/w.tracks.length*100:0}%"></i></div>
       ${avgScoreLine(w)}
       ${w.predictionsLocked
-        ? `<div class="lockbanner">🔒 predictions locked ${fmtDate(w.predictionsLockedAt)} — blind test active · <b>scoring is open</b></div>`
+        ? `<div class="lockbanner">🔒 predictions locked ${fmtDate(w.lockedAt)} — blind test active · <b>scoring is open</b></div>`
         : `<div class="btnrow"><button class="btn" id="lockbtn">🔒 Lock predictions</button></div>
         <div class="hint">Locking timestamps the predictions. Score only counts after lock — this preserves the blind test.</div>`}
     </div>`;
@@ -252,7 +252,9 @@ function renderWeek(){
   if(window.SongNotes) SongNotes.bind($("view-week"));
 
   $("view-week").querySelectorAll("[data-score]").forEach(b=>{
-    b.onclick = e=>{ e.stopPropagation(); setStatus(+b.dataset.i, b.dataset.score, true); };
+    // taps stay on the track — like then ADDED? is a two-tap move on the SAME track.
+    // keyboard 1/2/3 keeps the auto-advance for speed.
+    b.onclick = e=>{ e.stopPropagation(); setStatus(+b.dataset.i, b.dataset.score, false); };
   });
   $("view-week").querySelectorAll("[data-added-yes]").forEach(b=>{
     b.onclick = e=>{ e.stopPropagation(); setAdded(+b.dataset.addedYes, true); };
@@ -270,7 +272,16 @@ function renderWeek(){
     el.addEventListener("change", ()=>{
       save();
       selIdx = +el.dataset.slider;
+      // pin the track's on-screen position across the re-render so the list doesn't jump
+      const trackEl = el.closest(".track");
+      const y = trackEl ? trackEl.getBoundingClientRect().top : null;
       renderWeek();
+      if(y != null){
+        const nt = document.querySelector(`#tracklist .track[data-i="${selIdx}"]`);
+        if(nt) window.scrollTo(0, window.scrollY + (nt.getBoundingClientRect().top - y));
+      } else {
+        paintSel();
+      }
     });
   });
   $("view-week").querySelectorAll("[data-head]").forEach(el=>{
@@ -330,7 +341,7 @@ function setAdded(i, yes){
   if(yes) t.status = "keep";
   else t.status = (t.status==="like") ? "like" : "skip";
   save(); renderWeek();
-  selIdx = Math.min(i+1, w.tracks.length-1); paintSel();
+  selIdx = i; paintSel(); // stay on this track — ADDED? is the second tap after like
 }
 function setStatus(i, status, advance){
   const w = week(); const t = w.tracks[i];
