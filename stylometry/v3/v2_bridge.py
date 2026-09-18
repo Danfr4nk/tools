@@ -14,7 +14,7 @@ from . import config
 PCTL_KEYS = ("percentile", "pct", "null_percentile", "divergence_percentile")
 FLAG_KEYS = ("flag", "style_flag", "flagged")
 ALERT_KEYS = ("alert", "style_alert", "alerted")
-DIV_KEYS = ("divergence", "score", "divergence_score")
+DIV_KEYS = ("divergence_index", "divergence", "score", "divergence_score")
 SUPPRESSED_KEYS = ("suppressed",)
 MEMBER_KEYS = ("msg_ids", "message_ids", "members", "window_msg_ids")
 
@@ -56,8 +56,10 @@ def adapt(record, kind=None):
                       (pct is not None and float(pct) >= config.FLAG_PCTL),
         "style_alert": bool(alert) if alert is not None else False,
         "style_suppressed": bool(supp) if supp is not None else False,
-        "v2_run_id": record.get("run_id") or record.get("id"),
-        "v2_window_id": node.get("window_id") or record.get("window_id"),
+        "v2_run_id": record.get("run_id") or record.get("id") or
+                      record.get("scored_at"),
+        "v2_window_id": (node.get("window_id") or record.get("window_id") or
+                         (kind if kind else None)),
         "v2_member_ids": [str(x) for x in members] if members else None,
         "source_keys": {"percentile": pct_key, "flag": flag_key},
     }
@@ -72,9 +74,10 @@ def load(path, kind=None):
             txt = fh.read().strip()
         if not txt:
             return {"available": False, "reason": "v2_record_empty"}
-        if txt.lstrip().startswith("{"):
+        try:
             rec = json.loads(txt)
-        else:                       # jsonl: take the last record
+        except ValueError:
+            # jsonl: take the last record (v2 run files are one record/line)
             rec = json.loads([l for l in txt.splitlines() if l.strip()][-1])
     except (ValueError, OSError) as exc:
         return {"available": False, "reason": "v2_record_unreadable",

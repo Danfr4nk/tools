@@ -1,5 +1,49 @@
 # CHANGELOG — stylometry v3 (semantic layer)
 
+## v3.0.1 — 2026-09-18 — production wiring
+
+First live wiring: v3 now scores real windows against the real corpus.
+
+### Corpus
+- `export_corpus.py` (new) — exports the 94,503-message outbound corpus
+  (`~/workspace/wikitest/corpus/messages.csv`, generated 2026-09-15) plus
+  386 recent chat messages as the `muse` tier, into v3's input contract
+  (`corpus/v3-baseline.jsonl`, 99,703 rows). Tier mapping mirrors v2's
+  baseline2.json: top-10 correspondents keep their own tier, everyone else
+  is `longtail`.
+- `topic_profiles.json` and `semantic_null.json` **rebuilt on the real
+  corpus** 2026-09-18 (11 tiers, 990,385 background tokens; 49 null strata
+  per axis). The selftest-built artifacts they replace are gone. Rebuilds
+  change every subsequent score — this date is the new baseline.
+
+### Bridge
+- `v2_bridge.py` — reads real v2 run records: `flag`→`style_flag`,
+  `null_percentile`→`percentile`, `alert`/`suppressed`→`style_alert`/
+  `style_suppressed`; adds `divergence_index` to the divergence keys
+  (`null_percentile` + `mahalanobis_distance` now surface as `divergence`);
+  `v2_run_id` falls back to `scored_at`, `v2_window_id` to the window kind;
+  v2 run files are JSONL (one record/line) — load takes the last line.
+  Verified day-one against `runs/2026-09-17.jsonl` and `runs/2026-09-18.jsonl`.
+
+### Layer B transport
+- `layer_b_manual.py` (new) — the cron-worker environment has no API key,
+  so the 30-min worker IS the Layer B transport. Two honest halves:
+  `--show` prints the versioned prompt + assembled window payload; the
+  worker performs the read and `--respond` validates the strict JSON
+  (bounds, discourse shares, non-empty joint_read), enforces the
+  calibration gate, writes the audit row, patches the run record, and
+  clears the pending queue.
+
+### State
+- `.gitignore` (new) — `runs/`, `audit/`, `queue/`, `__pycache__/`,
+  `entity_candidates.jsonl` are local run state, never committed.
+
+### Not done
+- `entity_registry.json` remains seed-only by design (populate on the Mac,
+  never commit the populated file) — the entity axis is dead until then.
+- 30-min v3 cron (`stylo-v3-burnin-30m`, goal-owned) runs the loop and
+  performs manual Layer B reads on ALERT windows.
+
 ## v3.0.0 — 2026-09-18 — initial build
 
 First release of the semantic layer. v2 remains **byte-identical**: v3 reads
