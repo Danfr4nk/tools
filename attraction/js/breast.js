@@ -6,13 +6,9 @@
 // and also validates + renders pasted JSON of the same schema.
 //
 // Pipeline (pure functions over an RGB buffer — no DOM, no models):
-//   1. YCrCb skin mask (Cr 130-205, Cb 80-140 — widened for warm light) +
-//      morphological close/open.
-//   2. Nipple seeding, areola-first: local V minima in skin with dark cores
-//      (kills the red-lips false positive), scored by dark-core depth and
-//      areola-redness (a-channel annulus vs background), ranked by cluster
-//      density then redness, refined to the pinkest point (nipple tip).
-//      The old HSV dark-red-disk detector locked onto hair; it is gone.
+//   1. YCrCb skin mask (Cr 135-180, Cb 85-135) + morphological close/open.
+//   2. Nipple seeds: HSV dark-red disks (H 0-12, S>50, V 20-160) inside skin,
+//      area 150-3000px, y < 0.72*H (rejects red nail polish). Largest wins.
 //   3. Areola: radial-edge scan from the nipple center on the CIELAB
 //      a-channel — 90 rays, steepest negative a-gradient in 30-130px with
 //      edge strength < -0.35; median of trimmed radii. (Robust where
@@ -47,10 +43,7 @@ function ycrcbSkin(r, g, b) {
   const Y = 0.299 * r + 0.587 * g + 0.114 * b;
   const Cr = (r - Y) * 0.713 + 128;
   const Cb = (b - Y) * 0.564 + 128;
-  // Widened for warm/incandescent light: measured torso skin hits Cr ~183
-  // under warm bulbs, which the old 135-180 band excluded entirely
-  // (leaving a Swiss-cheese mask and garbage downstream geometry).
-  return Cr >= 130 && Cr <= 205 && Cb >= 80 && Cb <= 140;
+  return Cr >= 135 && Cr <= 180 && Cb >= 85 && Cb <= 135;
 }
 
 // Returns [h (0-180), s (0-255), v (0-255)] — OpenCV 8-bit HSV.
@@ -134,61 +127,6 @@ function morphOpen(mask, w, h, k) {
   m = morph1D(m, w, h, k, true, true);
   m = morph1D(m, w, h, k, true, false);
   return m;
-}
-
-/* ---------------- gaussian blur (separable, for the nipple detector) ---------------- */
-
-function gaussianKernel(sigma) {
-  const r = Math.ceil(sigma * 3);
-  const k = new Float64Array(2 * r + 1);
-  let s = 0;
-  for (let i = -r; i <= r; i++) { const v = Math.exp(-(i * i) / (2 * sigma * sigma)); k[i + r] = v; s += v; }
-  for (let i = 0; i < k.length; i++) k[i] /= s;
-  return { k, r };
-}
-
-function gaussianBlur(src, w, h, sigma) {
-  // src: Float64Array(w*h). Returns blurred Float64Array.
-  const { k, r } = gaussianKernel(sigma);
-  const tmp = new Float64Array(w * h), out = new Float64Array(w * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let i = -r; i <= r; i++) {
-        const xx = x + i < 0 ? 0 : (x + i >= w ? w - 1 : x + i);
-        s += src[y * w + xx] * k[i + r];
-      }
-      tmp[y * w + x] = s;
-    }
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let i = -r; i <= r; i++) {
-        const yy = y + i < 0 ? 0 : (y + i >= h ? h - 1 : y + i);
-        s += tmp[yy * w + x] * k[i + r];
-      }
-      out[y * w + x] = s;
-    }
-  }
-  return out;
-}
-
-// 2D minimum filter via two 1D passes (reuses slidingWin).
-function minimumFilter2D(src, w, h, k) {
-  const tmp = new Float64Array(w * h), out = new Float64Array(w * h);
-  const line = new Float64Array(Math.max(w, h));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) line[x] = src[y * w + x];
-    const f = slidingWin(line, w, k, false);
-    for (let x = 0; x < w; x++) tmp[y * w + x] = f[x];
-  }
-  for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) line[y] = tmp[y * w + x];
-    const f = slidingWin(line, h, k, false);
-    for (let y = 0; y < h; y++) out[y * w + x] = f[y];
-  }
-  return out;
 }
 
 /* ---------------- connected components + shape utils ---------------- */
@@ -308,98 +246,30 @@ function skinMask(rgb, w, h) {
   return mask;
 }
 
-// Nipple seeding, areola-first (replaces the HSV dark-red-disk detector,
-// which locked onto dark red-brown hair — e.g. (630,20) in hair on the
-// Annie close-up vs the true nipple at (286,881)).
-//   1. Local V (value) minima inside skin with elevated redness: the nipple
-//      is a dark dimple; red lips fail here (no dark core, dV ~ 10).
-//   2. Each minimum is scored by dark-core depth (dV = ring V - core V > 12)
-//      and areola-redness (a-channel annulus 20-60px vs background 80-130px).
-//   3. Rank: local-minimum cluster density first (the nipple/areola complex
-//      throws several nearby minima; moles are isolated), then redness.
-//   4. Refine: pinkest (max smoothed a-channel, V > 90) point within 60px —
-//      the nipple tip. Darkest-pixel refinement was rejected: shadows win.
-// Validated against both reference photos (lands on the true nipple).
-function detectNipple(rgb, w, h, skin) {
-  const n = w * h;
-  const V = new Float64Array(n), A = new Float64Array(n);
-  for (let i = 0, j = 0; i < n; i++, j += 3) {
-    const r = rgb[j], g = rgb[j + 1], b = rgb[j + 2];
-    V[i] = Math.max(r, g, b);
-    A[i] = labA(r, g, b);
-  }
-  const Vs = gaussianBlur(V, w, h, 4);
-  const As = gaussianBlur(A, w, h, 3);
-
-  // skin median a-channel
-  const aSkin = [];
-  for (let i = 0; i < n; i++) if (skin[i]) aSkin.push(A[i]);
-  if (!aSkin.length) return null;
-  const medA = median(aSkin);
-
-  // local minima of smoothed V: pixel equals the 31x31 minimum
-  const minF = minimumFilter2D(Vs, w, h, 31);
-  const pk = new Uint8Array(n);
-  for (let y = 20; y < h - 20; y++) {
-    for (let x = 20; x < w - 20; x++) {
-      const i = y * w + x;
-      if (skin[i] && Vs[i] === minF[i] && A[i] > medA + 3) pk[i] = 1;
+// Nipple seeds: HSV dark-red disks inside skin, area 150-3000px, y < 0.72H.
+function nippleSeeds(rgb, w, h, skin) {
+  let cand = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = y * w + x;
+      if (!skin[p]) continue;
+      const j = p * 3;
+      const [hh, ss, vv] = rgbToHsv(rgb[j], rgb[j + 1], rgb[j + 2]);
+      if (hh >= 0 && hh <= 12 && ss > 50 && vv >= 20 && vv <= 160) cand[p] = 1;
     }
   }
-  const { labels, blobs } = labelBlobs(pk, w, h, 0);
-
-  const cands = [];
+  cand = morphOpen(cand, w, h, 5);
+  const { labels, blobs } = labelBlobs(cand, w, h, 0);
+  const seeds = [];
   for (const b of blobs) {
-    const cx = b.centroid.x, cy = b.centroid.y;
-    const coreV = [], ringV = [], annA = [], bgA = [];
-    const R = 130;
-    for (let dy = -R; dy <= R; dy++) {
-      const y = Math.round(cy + dy);
-      if (y < 0 || y >= h) continue;
-      for (let dx = -R; dx <= R; dx++) {
-        const x = Math.round(cx + dx);
-        if (x < 0 || x >= w) continue;
-        const r2 = dx * dx + dy * dy, i = y * w + x;
-        // Independent bins (NOT else-if): ring [15,40) and annulus [20,60)
-        // overlap by design, matching the validated prototype.
-        if (r2 < 144) coreV.push(V[i]);
-        if (r2 >= 225 && r2 < 1600) ringV.push(V[i]);
-        if (r2 >= 400 && r2 < 3600) annA.push(A[i]);
-        if (r2 >= 6400 && r2 < 16900) bgA.push(A[i]);
-      }
-    }
-    if (!coreV.length || !ringV.length || !annA.length || !bgA.length) continue;
-    const dV = median(ringV) - median(coreV);
-    const redness = median(annA) - median(bgA);
-    if (dV > 12 && redness > 2) cands.push({ x: cx, y: cy, dV, redness });
+    if (b.area <= 150 || b.area >= 3000) continue;
+    if (b.centroid.y >= h * NIPPLE_SEED_MAX_Y) continue; // nail polish, not nipple
+    const pts = componentPixels(labels, b.id, w, h);
+    const c = enclosingCircle(pts);
+    seeds.push({ x: c.cx, y: c.cy, r: c.r, area: b.area });
   }
-  if (!cands.length) return null;
-
-  // cluster density: neighbours within 70px
-  for (const c of cands) {
-    let d = 0;
-    for (const o of cands) {
-      if (o !== c && Math.hypot(o.x - c.x, o.y - c.y) < 70) d++;
-    }
-    c.density = d;
-  }
-  cands.sort((a, b) => b.density - a.density || b.redness - a.redness);
-  const win = cands[0];
-
-  // refine: pinkest point within 60px with V > 90
-  let bx = win.x, by = win.y, ba = -Infinity;
-  for (let dy = -60; dy <= 60; dy++) {
-    const y = Math.round(win.y + dy);
-    if (y < 0 || y >= h) continue;
-    for (let dx = -60; dx <= 60; dx++) {
-      if (dx * dx + dy * dy > 3600) continue;
-      const x = Math.round(win.x + dx);
-      if (x < 0 || x >= w) continue;
-      const i = y * w + x;
-      if (V[i] > 90 && As[i] > ba) { ba = As[i]; bx = x; by = y; }
-    }
-  }
-  return { x: bx, y: by, areolaSeed: win };
+  seeds.sort((a, b) => b.area - a.area);
+  return seeds;
 }
 
 // Areola: radial-edge scan on the CIELAB a-channel from the nipple center.
@@ -484,17 +354,13 @@ function rowRuns(skin, w, y) {
   return runs;
 }
 
-// Scale anchors, best-first chain: red nails (larger, more robust) ->
-// barbell ball (chest plane, no perspective error, but tiny) ->
-// manual (null). The old code measured the areola as a "nail"; the nipple
-// zone is now excluded from nail search.
-function nailAnchor(rgb, w, h, nx, ny) {
+// Nail anchor: HSV red blobs in the hand region (y > 0.6H); median min-area-
+// rect short side; 13mm assumed nail width.
+function nailAnchor(rgb, w, h) {
   let red = new Uint8Array(w * h);
   const yHand = Math.floor(h * 0.6);
   for (let y = yHand; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const dx = x - nx, dy = y - ny;
-      if (dx * dx + dy * dy < 150 * 150) continue; // not the areola
       const p = y * w + x, j = p * 3;
       const [hh, ss, vv] = rgbToHsv(rgb[j], rgb[j + 1], rgb[j + 2]);
       if ((hh <= 8 || hh >= 172) && ss > 90 && vv > 40) red[p] = 1;
@@ -502,66 +368,14 @@ function nailAnchor(rgb, w, h, nx, ny) {
   }
   red = morphClose(red, w, h, 5);
   const { labels, blobs } = labelBlobs(red, w, h, 0);
-  const widths = [];
-  for (const b of blobs) {
-    if (b.area < 150 || b.area > 1500) continue;
-    const bw = b.bbox.w, bh = b.bbox.h;
-    if (Math.max(bw, bh) / Math.max(Math.min(bw, bh), 1) > 3) continue;
+  const big = blobs.filter(b => b.area > 200).sort((a, b) => b.area - a.area).slice(0, 5);
+  if (!big.length) return null;
+  const widths = big.map(b => {
     const hull = convexHull(componentPixels(labels, b.id, w, h));
-    const short = minAreaRect(hull).h;
-    console.error('DBG nail blob (%.0f,%.0f) area=%d bbox=%dx%d short=%.1f'.replace('%.0f', b.centroid.x.toFixed(0)).replace('%.0f', b.centroid.y.toFixed(0)).replace('%d', b.area).replace('%d', bw).replace('%d', bh).replace('%.1f', short));
-    if (short > 0) widths.push({ short, x: b.centroid.x, y: b.centroid.y });
-  }
+    return minAreaRect(hull).h; // short side = nail width
+  }).filter(v => v > 0);
   if (!widths.length) return null;
-  widths.sort((a, b) => a.short - b.short);
-  return {
-    kind: 'nail',
-    widths_px: widths.map(v => r1(v.short)),
-    median_width_px: r1(median(widths.map(v => v.short))),
-    n: widths.length,
-  };
-}
-
-export const BARBELL_BALL_MM = 5.0; // 14G standard nipple barbell ball
-
-// Barbell anchor: pair of small metallic blobs (bright, desaturated) near the
-// nipple, midpoint within 30px of the nipple, separation 20-80px.
-// Ball diameter in px -> 5.0mm assumed (14G standard; labeled, not certain).
-function barbellAnchor(rgb, w, h, nx, ny) {
-  const n = w * h;
-  let met = new Uint8Array(n);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const dx = x - nx, dy = y - ny;
-      if (dx * dx + dy * dy > 120 * 120) continue;
-      const j = (y * w + x) * 3;
-      const r = rgb[j], g = rgb[j + 1], b = rgb[j + 2];
-      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-      const sat = mx === 0 ? 0 : (mx - mn) / mx;
-      if (mx > 180 && sat < 0.35) met[y * w + x] = 1;
-    }
-  }
-  met = morphOpen(met, w, h, 3);
-  const { blobs } = labelBlobs(met, w, h, 0);
-  const balls = blobs
-    .filter(b => b.area >= 8 && b.area <= 200)
-    .map(b => ({ x: b.centroid.x, y: b.centroid.y, d: 2 * Math.sqrt(b.area / Math.PI) }));
-  for (let i = 0; i < balls.length; i++) {
-    for (let k = i + 1; k < balls.length; k++) {
-      const a = balls[i], b = balls[k];
-      const sep = Math.hypot(a.x - b.x, a.y - b.y);
-      if (sep < 20 || sep > 80) continue;
-      const mxp = (a.x + b.x) / 2, myp = (a.y + b.y) / 2;
-      if (Math.hypot(mxp - nx, myp - ny) > 30) continue;
-      const ballPx = (a.d + b.d) / 2;
-      return {
-        kind: 'barbell',
-        ball_diameter_px: r1(ballPx),
-        mm_per_px: BARBELL_BALL_MM / ballPx,
-      };
-    }
-  }
-  return null;
+  return { median_width_px: median(widths), n_nails: widths.length };
 }
 
 // Cup verdict from mound fullness (scale-free): width / nipple-to-fold.
@@ -595,11 +409,10 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
   skin = morphClose(skin, w, h, 9);
   skin = morphOpen(skin, w, h, 9);
 
-  // 2. nipple seed (areola-first; the old HSV dark-red-disk detector is gone —
-  //    it locked onto hair)
-  const nip = detectNipple(rgb, w, h, skin);
-  if (!nip) return null;
-  const nx = nip.x, ny = nip.y;
+  // 2. nipple seed
+  const seeds = nippleSeeds(rgb, w, h, skin);
+  if (!seeds.length) return null;
+  const nx = seeds[0].x, ny = seeds[0].y;
 
   // 3. areola radial-edge fit
   const ar = areolaRadial(rgb, w, h, nx, ny);
@@ -624,43 +437,11 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
   if (yTop < 0 || yBot < 0 || yBot <= ny) return null;
   const nippleToFoldPx = yBot - ny;
 
-  // 6. scale anchor chain: barbell (chest plane) -> nails (hand plane) -> manual
-  const barb = barbellAnchor(rgb, w, h, nx, ny);
-  const nail = nailAnchor(rgb, w, h, nx, ny);
-  let mmPerPx = null, scaleMethod = 'manual_required', scaleAssumption = '',
-      scaleCaveat = 'no automatic anchor resolved; set mm/px manually in the workbench';
-  const anchors = {};
-  if (barb) {
-    anchors.barbell = {
-      ball_diameter_px: barb.ball_diameter_px,
-      assumed_ball_mm: BARBELL_BALL_MM,
-      mm_per_px: Math.round(barb.mm_per_px * 10000) / 10000,
-    };
-  }
-  if (nail) {
-    anchors.nails = {
-      widths_px: nail.widths_px,
-      median_width_px: nail.median_width_px,
-      assumed_nail_mm: NAIL_MM,
-      mm_per_px: Math.round((NAIL_MM / nail.median_width_px) * 10000) / 10000,
-    };
-  }
-  // Nails are primary (larger target, more robust). Barbell is fallback-only:
-  // at typical phone-photo distances the ball is a few px and the highlight
-  // undermeasures it, so a barbell reading that disagrees with nails is
-  // not trusted. Barbell requires >= 6px balls to be usable at all.
-  if (nail) {
-    mmPerPx = NAIL_MM / nail.median_width_px;
-    scaleMethod = 'nail_anchor';
-    scaleAssumption = 'adult female fingernail width = ' + NAIL_MM.toFixed(1) + 'mm (population mean, index/middle)';
-    scaleCaveat = 'hand likely 3-8cm closer to lens than chest plane; physical values skew small. treat as +-25%.';
-  } else if (barb && barb.ball_diameter_px >= 6) {
-    mmPerPx = barb.mm_per_px;
-    scaleMethod = 'barbell_ball';
-    scaleAssumption = 'nipple barbell ball = ' + BARBELL_BALL_MM.toFixed(1) + 'mm (14G standard; gauge not verified from image)';
-    scaleCaveat = 'ball is small in frame; diameter error dominates. chest plane: no perspective correction needed.';
-  }
-  const mm = px => mmPerPx == null ? null : r1(px * mmPerPx);
+  // 6. nail scale anchor
+  const nail = nailAnchor(rgb, w, h);
+  if (!nail) return null;
+  const mmPerPx = NAIL_MM / nail.median_width_px;
+  const mm = px => r1(px * mmPerPx);
 
   // left breast: skin run at nipple height containing x ~ 0.30W (truncated)
   const lrun = runs.find(r => r[0] <= w * 0.30 && w * 0.30 <= r[1]);
@@ -691,15 +472,13 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
       right_nipple_to_fold_px: Math.round(nippleToFoldPx),
       right_fold_y_px: yBot,
       cleavage_x_at_nipple_height_px: cx,
-      nail_anchor_median_width_px: nail ? r1(nail.median_width_px) : null,
-      barbell_ball_diameter_px: barb ? barb.ball_diameter_px : null,
+      nail_anchor_median_width_px: r1(nail.median_width_px),
     },
     scale_model: {
-      method: scaleMethod,
-      assumption: scaleAssumption,
-      mm_per_px: mmPerPx == null ? null : Math.round(mmPerPx * 10000) / 10000,
-      caveat: scaleCaveat,
-      anchors_detected: anchors,
+      method: 'nail_anchor',
+      assumption: 'adult female fingernail width = ' + NAIL_MM.toFixed(1) + 'mm (population mean, index/middle)',
+      mm_per_px: Math.round(mmPerPx * 10000) / 10000,
+      caveat: 'hand likely 3-8cm closer to lens than chest plane; physical values skew small. treat as +-25%.',
     },
     modeled_physical: {
       right_areola_diameter_mm: mm(ar.diameter_px),
@@ -721,9 +500,7 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
         Math.round(ar.iqr[0]) + '-' + Math.round(ar.iqr[1]) + 'px)',
       mound_width: 'medium (clean fabric-boundary edges; angled close-up, not orthographic)',
       nipple_to_fold: 'high (sharp fabric edge under breast)',
-      physical_mm: mmPerPx == null
-        ? 'unresolved (no automatic anchor; set scale manually)'
-        : 'low-medium (' + scaleMethod + '; ' + scaleCaveat + ')',
+      physical_mm: 'low-medium (single nail anchor, perspective caveat)',
       cup: 'modeled (band unseen; verdict firm per standing lexicon, method labeled)',
       left_breast: lrun ? 'low (truncated by frame)' : 'not resolved',
     },
@@ -745,19 +522,13 @@ export function validateBreastTelemetry(obj) {
   const mp = obj.measured_px || {};
   need(mp.right_nipple && NUM(mp.right_nipple.x) && NUM(mp.right_nipple.y), 'missing measured_px.right_nipple.{x,y}');
   for (const k of ['right_areola_diameter_px', 'right_mound_width_px', 'right_nipple_to_fold_px',
-    'right_fold_y_px', 'cleavage_x_at_nipple_height_px'])
+    'right_fold_y_px', 'cleavage_x_at_nipple_height_px', 'nail_anchor_median_width_px'])
     need(NUM(mp[k]), 'missing measured_px.' + k);
-  need(mp.nail_anchor_median_width_px == null || NUM(mp.nail_anchor_median_width_px),
-    'measured_px.nail_anchor_median_width_px must be a number or null');
-  need(mp.barbell_ball_diameter_px == null || NUM(mp.barbell_ball_diameter_px),
-    'measured_px.barbell_ball_diameter_px must be a number or null');
   const sm = obj.scale_model || {};
-  need(typeof sm.method === 'string' && typeof sm.assumption === 'string' &&
-    (sm.mm_per_px == null || NUM(sm.mm_per_px)) && typeof sm.caveat === 'string' &&
-    sm.anchors_detected && typeof sm.anchors_detected === 'object', 'incomplete scale_model');
+  need(sm.method && sm.assumption && NUM(sm.mm_per_px) && sm.caveat, 'incomplete scale_model');
   const ph = obj.modeled_physical || {};
   for (const k of ['right_areola_diameter_mm', 'right_mound_width_mm', 'right_nipple_to_fold_mm'])
-    need(ph[k] == null || NUM(ph[k]), 'modeled_physical.' + k + ' must be a number or null');
+    need(NUM(ph[k]), 'missing modeled_physical.' + k);
   need(obj.left_breast && typeof obj.left_breast === 'object', 'missing left_breast');
   const ce = obj.cup_estimate || {};
   need(ce.method && ce.assumption && typeof ce.verdict === 'string' && ce.band_table && ce.note,
