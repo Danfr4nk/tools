@@ -64,7 +64,8 @@ h2{font-size:17px;margin-bottom:4px}
 .controls{border-top:1px solid var(--line);padding:10px 12px 12px;display:flex;flex-direction:column;gap:10px}
 .sliderow{display:flex;align-items:center;gap:10px}
 .clabel{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:1px;flex-shrink:0}
-input[type=range]{flex:1;accent-color:var(--keep);cursor:pointer;height:24px}
+input[type=number][data-scorebox]{width:84px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-family:var(--mono);font-size:14px}
+input[type=number][data-scorebox]:focus{outline:1px solid var(--acc);border-color:var(--acc)}
 .sval{font-family:var(--mono);font-size:14px;min-width:28px;text-align:right}
 .sval-head{font-family:var(--mono);font-size:11px;color:var(--keep);flex-shrink:0}
 .outcomerow{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}

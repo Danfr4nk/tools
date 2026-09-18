@@ -192,7 +192,7 @@ function renderWeek(){
         ? `<span class="badge locked">🔒 locked ${esc(w.lockedAt||"")}</span>`
         : `<span class="badge unlocked">predictions unlocked</span>`}
     </div>
-    <div class="sub">${w.tracks.length} tracks · slider = your score 1–10 · <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">1</span> skip · <span class="kbd">2</span> like · <span class="kbd">3</span> added · <span class="kbd">p</span> player</div>`;
+    <div class="sub">${w.tracks.length} tracks · type your score 1.00–10.00 · <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">1</span> skip · <span class="kbd">2</span> like · <span class="kbd">3</span> added · <span class="kbd">p</span> player</div>`;
 
   h += `<div id="scorebar"><div class="row spread">
       <div class="statgrid" style="margin:0;flex:1;min-width:260px">
@@ -222,8 +222,8 @@ function renderWeek(){
       <div class="controls">
         <div class="sliderow">
           <span class="clabel">SCORE</span>
-          <input type="range" min="1" max="10" step="1" value="${t.score??5}" data-slider="${i}" aria-label="my score">
-          <span class="sval" data-sval="${i}">${t.score??"—"}</span>
+          <input type="number" min="1" max="10" step="0.01" inputmode="decimal" placeholder="1–10"
+                 value="${t.score??""}" data-scorebox="${i}" aria-label="my score 1 to 10">
         </div>
         <div class="outcomerow">
           <div class="scorebtns">
@@ -262,16 +262,19 @@ function renderWeek(){
   $("view-week").querySelectorAll("[data-added-no]").forEach(b=>{
     b.onclick = e=>{ e.stopPropagation(); setAdded(+b.dataset.addedNo, false); };
   });
-  $("view-week").querySelectorAll("[data-slider]").forEach(el=>{
-    el.addEventListener("input", ()=>{
-      const w = week(); const t = w.tracks[+el.dataset.slider];
-      t.score = +el.value;
-      const sv = document.querySelector(`[data-sval="${el.dataset.slider}"]`);
-      if(sv) sv.textContent = el.value;
-    });
+  $("view-week").querySelectorAll("[data-scorebox]").forEach(el=>{
     el.addEventListener("change", ()=>{
+      const w = week(); const t = w.tracks[+el.dataset.scorebox];
+      const raw = el.value.trim();
+      if(raw === ""){ t.score = null; }
+      else{
+        let v = parseFloat(raw);
+        if(isNaN(v)){ el.value = (t.score ?? ""); return; }
+        v = Math.min(10, Math.max(1, Math.round(v*100)/100)); // clamp 1–10, 2 decimals
+        t.score = v;
+      }
       save();
-      selIdx = +el.dataset.slider;
+      selIdx = +el.dataset.scorebox;
       // pin the track's on-screen position across the re-render so the list doesn't jump
       const trackEl = el.closest(".track");
       const y = trackEl ? trackEl.getBoundingClientRect().top : null;
