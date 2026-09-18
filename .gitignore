@@ -1,0 +1,16 @@
+# stylometry v3 DATA — message text, real entity names, run records.
+# Code lives in the repo; data lives under $STYLO_V3_DATA, outside it.
+# These patterns are a backstop for a symlinked or misconfigured data root.
+stylometry/v3/runs/
+stylometry/v3/windows/
+stylometry/v3/queue/
+stylometry/v3/state/
+stylometry/v3/audit/
+stylometry/v3/*.jsonl
+stylometry/**/entity_candidates.jsonl
+stylometry/**/labels.jsonl
+stylometry/**/cron.log
+
+__pycache__/
+*.py[cod]
+.DS_Store

@@ -32,6 +32,12 @@ Each tool lives in its own directory with its own README:
   age-bracket classifier fully in-browser (Transformers.js, local ONNX —
   nothing uploaded); Python CLI (`age.py`) uses the same model via
   HuggingFace transformers. See `age/README.md` for the SOTA research notes.
+- **`stylometry/`** — stylometric state-tracking instrument. `v3/` is the
+  semantic layer: what is being said, fused with v2's style read through a 2x2
+  joint matrix. Local stdlib Python, not a web app — Layer A runs offline in a
+  30-minute loop, Layer B calls the Claude API on triggers only. All data
+  (message text, entity names, run records) lives outside this repo under
+  `$STYLO_V3_DATA`. See `stylometry/v3/BURNIN-V3.md`.
 - **`workbench/`** — one photo in, every instrument out. Shared SCRFD face
   detection fans out to age estimation, facial telemetry, and kinship
   comparison in a single pass (reuses `kinship/`'s pipeline + models,

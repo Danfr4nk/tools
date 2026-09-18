@@ -1,0 +1,9 @@
+{
+ "note": "Run build_semantic_null.py after topic_profiles.json exists. Every axis percentile is null until then.",
+ "status": "unbuilt",
+ "strata": {
+  "discourse": {},
+  "entity": {},
+  "topic": {}
+ }
+}
