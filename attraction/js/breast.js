@@ -409,6 +409,21 @@ function areolaRadial(rgb, w, h, nx, ny) {
     const j = (y * w + x) * 3;
     return labA(rgb[j], rgb[j + 1], rgb[j + 2]);
   };
+  const atV = (x, y) => {
+    const j = (y * w + x) * 3;
+    return rgbToHsv(rgb[j], rgb[j + 1], rgb[j + 2])[2];
+  };
+  // Nipple reference darkness: the dip we want is the AREOLA edge, not the
+  // nipple edge. Sample V over the central disk; a dip only counts when the
+  // tissue before it is clearly brighter than the nipple core.
+  let nipV = 0, nipN = 0;
+  for (let dy = -8; dy <= 8; dy++) for (let dx = -8; dx <= 8; dx++) {
+    if (dx * dx + dy * dy > 64) continue;
+    const x = Math.round(nx + dx), y = Math.round(ny + dy);
+    if (x < 0 || x >= w || y < 0 || y >= h) continue;
+    nipV += atV(x, y); nipN++;
+  }
+  nipV = nipN ? nipV / nipN : 0;
   for (let deg = 0; deg < 360; deg += 4) {
     const dx = Math.cos(deg * Math.PI / 180), dy = Math.sin(deg * Math.PI / 180);
     const prof = [], rs = [];
@@ -426,12 +441,33 @@ function areolaRadial(rgb, w, h, nx, ny) {
       for (let k = -2; k <= 2; k++) { const ii = i + k; if (ii >= 0 && ii < grad.length) { s += grad[ii]; n++; } }
       return s / n;
     });
-    let gi = -1, gv = 0;
+    // Innermost sustained redness drop: the areola edge is the FIRST major
+    // a-channel falloff moving out from the nipple. (The old strongest-in-
+    // (30,130) peak-pick overshot on full-body photos where the true edge
+    // sits inside 30px — it latched onto mound shadows instead and drew a
+    // giant circle.)
+    // Strongest qualified dip on this ray. The old code's (30,130) window is
+    // gone — on full-body photos the true edge sits inside 30px and the old
+    // floor forced every ray to latch onto mound shadows instead (the giant
+    // circles). The nipple V-guard + sustained-drop tests below are what now
+    // keeps the nipple edge and texture wiggles out.
+    let best = -1, bestG = 0;
     for (let i = 0; i < sm.length; i++) {
       const r = rs[i + 1];
-      if (r > 30 && r < 130 && sm[i] < gv) { gv = sm[i]; gi = i; }
+      if (r < 12 || r > 130) continue;
+      if (sm[i] >= -0.35 || sm[i] >= bestG) continue;
+      // sustained? mean a-channel of the 8 samples after the dip must sit
+      // well below the 8 before it — kills intra-areola texture wiggles.
+      // Plus the pre-dip tissue must be brighter than the nipple core, so a
+      // nipple-edge dip (dark on both sides) can't win.
+      let pre = 0, pn = 0, post = 0, qn = 0, preV = 0, vn = 0;
+      for (let k = 1; k <= 8; k++) {
+        if (i - k >= 0) { pre += prof[i - k]; pn++; preV += atV(Math.round(nx + dx * rs[i - k]), Math.round(ny + dy * rs[i - k])); vn++; }
+        if (i + 1 + k < prof.length) { post += prof[i + 1 + k]; qn++; }
+      }
+      if (pn > 0 && qn > 0 && (post / qn) < (pre / pn) - 1.0 && (preV / vn) > nipV + 12) { best = r; bestG = sm[i]; }
     }
-    if (gi >= 0 && gv < -0.35) radii.push(rs[gi + 1]);
+    if (best >= 0) radii.push(best);
   }
   if (radii.length < 8) return null;
   const lo = percentile(radii, 10), hi = percentile(radii, 90);
