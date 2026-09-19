@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   PARAMS, deriveParams, bustOffset, moundFalloff, detectApexes, sculptBust,
+  areolaAngle, areolaR, foldDepthAt,
 } from '../mannequin.js';
 
 const dir = dirname(fileURLToPath(import.meta.url));
@@ -207,4 +208,174 @@ test('sculptBust: zero displacement outside the sculpt window', () => {
   }
   assert.ok(checked > 10000, 'checked ' + checked);
   assert.equal(worst, 0);
+});
+
+/* --- v3.4: measured geometry package (ellipse + contour + fold curve) --- */
+function baseObj() {
+  return {
+    measured_px: {
+      right_nipple: { x: 380, y: 1180 },
+      cleavage_x_at_nipple_height_px: 1000,
+      right_fold_y_px: 1900,
+    },
+    scale_model: { mm_per_px: 0.151 },
+    modeled_physical: { right_mound_width_mm: 148, right_areola_diameter_mm: 48 },
+    cup_estimate: { verdict: 'D (34D)' },
+    source: 'test',
+  };
+}
+function fullLoopPts(n = 72, rx = 490, ry = 585) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / n * 2 * Math.PI;
+    pts.push([380 + rx * Math.cos(t), 1180 - ry * Math.sin(t)]);
+  }
+  return pts;
+}
+
+test('deriveParams: absent new geometry degrades to nulls, no throw', () => {
+  const P = deriveParams(baseObj());
+  assert.equal(P.areolaEllipse, null);
+  assert.equal(P.contourTable, null);
+  assert.equal(P.contourMm, null);
+  assert.equal(P.foldCurve, null);
+  assert.equal(P.contourCoverage, 0);
+  // and the sculpt behaves exactly like v3.3
+  assert.equal(bustOffset(10, 20, P), bustOffset(10, 20, T));
+});
+
+test('deriveParams: areola ellipse parsed to mm, tilt kept as diagnostic', () => {
+  const obj = baseObj();
+  obj.measured_px.right_areola_ellipse = {
+    semi_major_px: 170, semi_minor_px: 140,
+    major_axis_angle_deg: 20, tilt_deg: 34.6, axis_ratio: 0.82,
+  };
+  const P = deriveParams(obj);
+  assert.ok(Math.abs(P.areolaEllipse.a - 170 * 0.151) < 1e-9);
+  assert.ok(Math.abs(P.areolaEllipse.b - 140 * 0.151) < 1e-9);
+  assert.ok(Math.abs(P.areolaEllipse.ang - 20 * Math.PI / 180) < 1e-9);
+  assert.equal(P.areolaEllipse.tiltDeg, 34.6);
+});
+
+test('deriveParams: inverted ellipse axes rejected', () => {
+  const obj = baseObj();
+  obj.measured_px.right_areola_ellipse = {
+    semi_major_px: 140, semi_minor_px: 170, major_axis_angle_deg: 20,
+  };
+  assert.equal(deriveParams(obj).areolaEllipse, null);
+});
+
+test('areolaR: elliptical boundary, mirrored on the left, circular fallback', () => {
+  const obj = baseObj();
+  obj.measured_px.right_areola_ellipse = {
+    semi_major_px: 170, semi_minor_px: 140, major_axis_angle_deg: 0,
+  };
+  const P = deriveParams(obj);
+  const { a, b } = P.areolaEllipse;
+  // major axis along x: inside at 0.95a on x, outside at 0.95a on y
+  assert.ok(areolaR(a * 0.95, 0, P, 1) < 1, 'inside on major axis');
+  assert.ok(areolaR(0, a * 0.95, P, 1) > 1, 'outside on minor axis');
+  // same distance on x sits deeper inside than on y (elliptical, not circular)
+  assert.ok(areolaR(a * 0.95, 0, P, 1) < areolaR(0, a * 0.95, P, 1));
+  // mirror: left breast reflects the angle across the midline
+  assert.ok(Math.abs(areolaAngle(P, -1) - (Math.PI - P.areolaEllipse.ang)) < 1e-12);
+  assert.ok(Math.abs(areolaAngle(P, 1) - P.areolaEllipse.ang) < 1e-12);
+  // no ellipse -> circular fallback on areolaD
+  assert.ok(Math.abs(areolaR(24, 0, T, 1) - 1) < 1e-9);
+  assert.ok(Math.abs(areolaR(0, 24, T, -1) - 1) < 1e-9);
+});
+
+test('bustOffset: default side matches explicit side=1', () => {
+  assert.equal(bustOffset(10, 20, T), bustOffset(10, 20, T, 1));
+});
+
+test('deriveParams: full contour loop drives ~all of the footprint', () => {
+  const obj = baseObj();
+  obj.measured_px.right_breast_contour_px = fullLoopPts();
+  const P = deriveParams(obj);
+  assert.ok(P.contourCoverage > 0.95, 'coverage = ' + P.contourCoverage.toFixed(3));
+  assert.ok(P.contourMm.length <= 120 && P.contourMm.length >= 12);
+  // boundary at angle 0 is ~490px*0.151 = 74mm: inside -> table falloff, outside -> 0
+  const inside = moundFalloff(60, 0, P), outside = moundFalloff(90, 0, P);
+  assert.ok(inside > 0 && inside < 1, 'inside = ' + inside.toFixed(3));
+  assert.equal(outside, 0);
+});
+
+test('deriveParams: tiny contour rejected (< 12 pts)', () => {
+  const obj = baseObj();
+  obj.measured_px.right_breast_contour_px = fullLoopPts(8);
+  assert.equal(deriveParams(obj).contourTable, null);
+});
+
+test('moundFalloff: unmeasured directions fall back to the modeled footprint', () => {
+  const obj = baseObj();
+  const pts = [];
+  for (let i = 0; i < 40; i++) { // 200° arc only, like a partial contour
+    const t = (i / 40) * (200 * Math.PI / 180) - Math.PI / 2;
+    pts.push([380 + 490 * Math.cos(t), 1180 - 585 * Math.sin(t)]);
+  }
+  obj.measured_px.right_breast_contour_px = pts;
+  const P = deriveParams(obj);
+  assert.ok(P.contourCoverage > 0.3 && P.contourCoverage < 0.7,
+    'coverage = ' + P.contourCoverage.toFixed(3));
+  // angle 180° is in the gap -> identical to the old analytic model
+  assert.ok(Math.abs(moundFalloff(-37, 0, P) - moundFalloff(-37, 0, T)) < 1e-12);
+  assert.ok(Math.abs(moundFalloff(0, 50, P) - moundFalloff(0, 50, T)) > 1e-6,
+    'measured direction differs from analytic');
+});
+
+test('foldDepthAt: measured curve beats the flat nipUp', () => {
+  const obj = baseObj();
+  const fold = [];
+  for (let i = 0; i <= 20; i++) {
+    const x = -50 + i / 20 * 860;
+    fold.push([x, 1890 + 20 * Math.cos((x - 380) / 490 * Math.PI)]);
+  }
+  obj.measured_px.right_fold_curve_px = fold;
+  const P = deriveParams(obj);
+  assert.ok(P.foldCurve.length >= 4);
+  assert.notEqual(foldDepthAt(P, -200), foldDepthAt(P, 0));
+  assert.equal(foldDepthAt(P, -1e6), P.foldCurve[0].depth); // clamped at ends
+  assert.equal(foldDepthAt(P, 1e6), P.foldCurve[P.foldCurve.length - 1].depth);
+  // the crease tracks the curve: local minimum at the curve's depth
+  const d0 = foldDepthAt(P, 0);
+  const at = bustOffset(0, -d0, P);
+  assert.ok(at < bustOffset(0, -d0 + 40, P) && at < bustOffset(0, -d0 - 40, P),
+    'crease follows the fold curve');
+});
+
+test('deriveParams: short fold curve rejected (< 4 pts)', () => {
+  const obj = baseObj();
+  obj.measured_px.right_fold_curve_px = [[0, 1900], [10, 1900], [20, 1900]];
+  assert.equal(deriveParams(obj).foldCurve, null);
+});
+
+test('sculptBust: full new-geometry T sculpts the real mesh, no NaN', () => {
+  const obj = baseObj();
+  obj.measured_px.right_areola_ellipse = {
+    semi_major_px: 170, semi_minor_px: 140, major_axis_angle_deg: 20, tilt_deg: 34.6,
+  };
+  obj.measured_px.right_breast_contour_px = fullLoopPts();
+  const fold = [];
+  for (let i = 0; i <= 20; i++) {
+    const x = -50 + i / 20 * 860;
+    fold.push([x, 1890 + 20 * Math.cos((x - 380) / 490 * Math.PI)]);
+  }
+  obj.measured_px.right_fold_curve_px = fold;
+  const P = deriveParams(obj);
+  const ap = detectApexes(pos);
+  const { pos: out, colors } = sculptBust(pos, nrm, P, ap);
+  let bad = 0;
+  for (let i = 0; i < out.length; i++)
+    if (!isFinite(out[i]) || !isFinite(colors[i])) bad++;
+  assert.equal(bad, 0);
+  // apex still moves outward by roughly the full profile
+  const A = ap[0].side === 1 ? ap[0] : ap[1];
+  let bd = 1e9, bi = 0;
+  for (let i = 0; i < pos.length / 3; i++) {
+    const d = Math.hypot(pos[i * 3] - A.x, pos[i * 3 + 1] - A.y, pos[i * 3 + 2] - A.z);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  const moved = Math.hypot(out[bi * 3] - pos[bi * 3], out[bi * 3 + 1] - pos[bi * 3 + 1], out[bi * 3 + 2] - pos[bi * 3 + 2]);
+  assert.ok(moved > 20 && moved < 60, 'apex moved ' + moved.toFixed(1) + ' mm');
 });

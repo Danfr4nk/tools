@@ -31,9 +31,30 @@ const SAMPLE = {
     cleavage_x_at_nipple_height_px: 1000,
     nail_anchor_median_width_px: 96,
     left_breast: 'mirrored from right (sample)',
+    right_areola_ellipse: {
+      center_px: { x: 380, y: 1180 }, semi_major_px: 170, semi_minor_px: 140,
+      major_axis_angle_deg: 20, tilt_deg: 34.6, axis_ratio: 0.82,
+    },
+    right_breast_contour_px: (() => {
+      const pts = [];
+      for (let i = 0; i < 72; i++) {
+        const t = i / 72 * 2 * Math.PI;
+        pts.push([380 + 490 * Math.cos(t), 1180 - Math.sin(t) * (585 + 65 * Math.sin(t))]);
+      }
+      return pts;
+    })(),
+    right_fold_curve_px: (() => {
+      const pts = [];
+      for (let i = 0; i <= 20; i++) {
+        const x = -50 + i / 20 * 860;
+        pts.push([x, 1890 + 20 * Math.cos((x - 380) / 490 * Math.PI)]);
+      }
+      return pts;
+    })(),
   },
   modeled_physical: {
     right_areola_diameter_mm: 48, left_areola_diameter_mm: 48,
+    right_areola_ellipse_axes_mm: [51.3, 42.3],
     right_mound_width_mm: 148, left_mound_width_mm: 148,
     right_nipple_to_fold_mm: 108.7, left_nipple_to_fold_mm: 108.7,
   },
@@ -220,6 +241,23 @@ function renderAll(obj, T) {
     ['cup verdict', esc(obj.cup_estimate.verdict), cf.cup],
     ['left breast', esc(obj.measured_px.left_breast || (obj.left_breast && obj.left_breast.note) || '—'), cf.left_breast],
   ];
+  if (T.areolaEllipse) {
+    const e = T.areolaEllipse;
+    rows.splice(1, 0, ['areola ellipse',
+      e.a.toFixed(1) + '×' + e.b.toFixed(1) + ' mm @ ' + (e.ang * 180 / Math.PI).toFixed(0) + '°',
+      'measured' + (e.tiltDeg !== null ? ' — tilt ~' + e.tiltDeg.toFixed(0) + '° from camera axis (diagnostic)' : '')]);
+  }
+  if (T.contourTable) {
+    rows.splice(2, 0, ['mound footprint',
+      'contour drives ' + Math.round(T.contourCoverage * 100) + '% of the outline',
+      'measured where resolved · modeled elsewhere']);
+  }
+  if (T.foldCurve) {
+    rows.splice(4, 0, ['fold line',
+      'measured curve (' + T.foldCurve.length + ' pts across ' +
+        (T.foldCurve[T.foldCurve.length - 1].dx - T.foldCurve[0].dx).toFixed(0) + ' mm)',
+      'measured — crease follows it']);
+  }
   let h = '<div class="cup">' + esc(obj.cup_estimate.verdict) + '</div>';
   h += '<table class="rtable">' + rows.map(r =>
     '<tr><td>' + r[0] + '</td><td><b>' + r[1] + '</b></td><td class="dim">' + esc(r[2] || '—') + '</td></tr>'
@@ -229,10 +267,18 @@ function renderAll(obj, T) {
   if (T.notes.length)
     h += '<p class="warn">' + T.notes.map(esc).join('<br>') + '</p>';
   h += '<p class="note">source: ' + esc(obj.source) + ' · left side mirrored from right</p>';
-  h += '<p class="note"><span class="dot" style="background:#7ee2a8"></span> measured — nipple offset/height, areola Ø, mound width' +
+  h += '<p class="note"><span class="dot" style="background:#7ee2a8"></span> measured — nipple offset/height, areola Ø' +
+    (T.areolaEllipse ? ' (elliptical: ' + T.areolaEllipse.a.toFixed(0) + '×' + T.areolaEllipse.b.toFixed(0) + ' mm)' : '') +
+    (T.contourTable ? ', mound footprint (' + Math.round(T.contourCoverage * 100) + '% contour-driven)' : ', mound width') +
+    (T.foldCurve ? ', fold curve' : '') +
     (T.apexMeasured ? ', apex projection' : '') +
     '<br><span class="dot" style="background:#ffd479"></span> modeled — ' +
-    (T.apexMeasured ? '' : 'apex projection, ') + 'upper-pole fullness, bust position, left mirror</p>';
+    (T.apexMeasured ? '' : 'apex projection, ') +
+    (T.contourTable ? 'footprint where the contour gave no boundary, ' : 'upper-pole fullness, ') +
+    'bust position, left mirror' +
+    (T.areolaEllipse && T.areolaEllipse.tiltDeg !== null
+      ? '<br>areola tilt ~' + T.areolaEllipse.tiltDeg.toFixed(0) + '° from the camera axis — diagnostic only, never drives the sculpt' : '') +
+    '</p>';
   h += '<p class="note" id="meshLine">mesh: loading…</p>';
   $('readout').innerHTML = h;
   fit();
