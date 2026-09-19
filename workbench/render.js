@@ -86,6 +86,11 @@ export function renderBreast(rep, photoImg) {
   h += '<table class="metrics">' +
     row('nipple (px)', mp.right_nipple.x + ', ' + mp.right_nipple.y) +
     row('areola diameter', mp.right_areola_diameter_px + ' px') +
+    row('areola ellipse', mp.right_areola_ellipse.semi_major_px + '×' +
+      mp.right_areola_ellipse.semi_minor_px + ' px, tilt ~' +
+      Math.round(mp.right_areola_ellipse.tilt_deg) + '°') +
+    row('breast contour', mp.right_breast_contour_px.length + ' mound-region boundary points') +
+    row('fold curve', mp.right_fold_curve_px.length + ' columns') +
     row('mound width', mp.right_mound_width_px + ' px') +
     row('nipple → fold', mp.right_nipple_to_fold_px + ' px (fold y=' + mp.right_fold_y_px + ')') +
     row('cleavage x @ nipple height', mp.cleavage_x_at_nipple_height_px + ' px') +
@@ -103,8 +108,8 @@ export function renderBreast(rep, photoImg) {
   h += '</ul></div>';
   if (photoImg) {
     h += '<div class="row"><div><canvas class="preview" id="bustOverlay"></canvas></div>' +
-      '<div class="note">magenta = areola fit · red = nipple · yellow = cleavage shadow · ' +
-      'cyan = mound width · green = fold line.</div></div>';
+      '<div class="note">magenta = areola ellipse fit · red = nipple · orange = breast contour · ' +
+      'yellow = cleavage shadow · cyan = mound width · green = fold curve.</div></div>';
   }
   const html = card('breast telemetry', h);
   // overlay draws after insertion into the DOM

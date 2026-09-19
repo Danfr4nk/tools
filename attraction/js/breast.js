@@ -404,7 +404,7 @@ function detectNipple(rgb, w, h, skin) {
 
 // Areola: radial-edge scan on the CIELAB a-channel from the nipple center.
 function areolaRadial(rgb, w, h, nx, ny) {
-  const radii = [];
+  const hits = []; // {deg, r} per successful ray — feeds the ellipse fit too
   const at = (x, y) => {
     const j = (y * w + x) * 3;
     return labA(rgb[j], rgb[j + 1], rgb[j + 2]);
@@ -441,11 +441,6 @@ function areolaRadial(rgb, w, h, nx, ny) {
       for (let k = -2; k <= 2; k++) { const ii = i + k; if (ii >= 0 && ii < grad.length) { s += grad[ii]; n++; } }
       return s / n;
     });
-    // Innermost sustained redness drop: the areola edge is the FIRST major
-    // a-channel falloff moving out from the nipple. (The old strongest-in-
-    // (30,130) peak-pick overshot on full-body photos where the true edge
-    // sits inside 30px — it latched onto mound shadows instead and drew a
-    // giant circle.)
     // Strongest qualified dip on this ray. The old code's (30,130) window is
     // gone — on full-body photos the true edge sits inside 30px and the old
     // floor forced every ray to latch onto mound shadows instead (the giant
@@ -467,18 +462,172 @@ function areolaRadial(rgb, w, h, nx, ny) {
       }
       if (pn > 0 && qn > 0 && (post / qn) < (pre / pn) - 1.0 && (preV / vn) > nipV + 12) { best = r; bestG = sm[i]; }
     }
-    if (best >= 0) radii.push(best);
+    if (best >= 0) hits.push({ deg, r: best });
   }
-  if (radii.length < 8) return null;
+  if (hits.length < 8) return null;
+  const radii = hits.map(hh => hh.r);
   const lo = percentile(radii, 10), hi = percentile(radii, 90);
-  const core = radii.filter(r => r >= lo && r <= hi);
-  const rMed = median(core);
+  const core = hits.filter(hh => hh.r >= lo && hh.r <= hi);
+  const rMed = median(core.map(hh => hh.r));
   return {
     radius_px: rMed,
     diameter_px: rMed * 2,
-    rays_used: radii.length,
+    rays_used: hits.length,
     iqr: [percentile(radii, 25), percentile(radii, 75)],
+    polar: core.map(hh => [hh.deg, r1(hh.r)]), // trimmed (deg, r) pairs for the ellipse fit
   };
+}
+
+// Areola ellipse: 2nd-harmonic Fourier fit of the polar boundary r(theta).
+// A planar circle viewed at an angle projects to an ellipse, so the fitted
+// axis ratio gives the areola's surface tilt (0 = facing the camera) — real
+// 3D orientation from a single photo, no extra sampling needed. The major
+// axis direction is the tilt axis in the image plane.
+function fitAreolaEllipse(polar, nx, ny) {
+  const n = polar.length;
+  if (n < 8) return null;
+  let r0 = 0, c2 = 0, s2 = 0, cx = 0, cy = 0;
+  for (const [deg, r] of polar) {
+    const t = deg * Math.PI / 180;
+    r0 += r; c2 += r * Math.cos(2 * t); s2 += r * Math.sin(2 * t);
+    cx += nx + r * Math.cos(t); cy += ny + r * Math.sin(t);
+  }
+  r0 /= n; c2 = 2 * c2 / n; s2 = 2 * s2 / n;
+  const A = Math.hypot(c2, s2);
+  const a = r0 + A, b = Math.max(r0 - A, 1); // a >= b by construction
+  let ang = Math.atan2(s2, c2) / 2 * 180 / Math.PI; // direction of widest extent
+  ang = ((ang % 180) + 180) % 180;
+  const tilt = Math.acos(Math.min(1, b / a)) * 180 / Math.PI;
+  return {
+    center_x: r1(cx / n), center_y: r1(cy / n),
+    semi_major_px: r1(a), semi_minor_px: r1(b),
+    major_axis_angle_deg: r1(ang),
+    tilt_deg: r1(tilt),
+    axis_ratio: Math.round((b / a) * 1000) / 1000,
+  };
+}
+
+// Breast mound contour: luminance-region boundary, not an edge hunt.
+// The mound is the bright skin region around the nipple, bounded by darker
+// tissue (cleavage shadow, under-fold shadow, outer falloff). Flood outward
+// from the bright mound ring just outside the areola over skin pixels within
+// K luminance levels of the ring median; the filled region's outer boundary
+// is the contour. Interior holes (moles, the areola itself, hair strands)
+// are filled. Backstops keep the region breast-local: rMax (a radius around
+// the nipple) and the cleavage wall (never cross the midline into the other
+// breast). Where the mound blends into evenly-lit chest the boundary follows
+// the light falloff — honest about the indeterminacy.
+export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wallX = null, wallSide = 0) {
+  const atG = (x, y) => {
+    const j = (y * w + x) * 3;
+    return grayOf(rgb[j], rgb[j + 1], rgb[j + 2]);
+  };
+  // reference: median luminance on the bright mound ring outside the areola
+  const ring = [];
+  const ringXY = [];
+  for (let deg = 0; deg < 360; deg += 6) {
+    const dx = Math.cos(deg * Math.PI / 180), dy = Math.sin(deg * Math.PI / 180);
+    for (let r = areolaR + 8; r < areolaR + 30; r += 4) {
+      const x = Math.round(nx + dx * r), y = Math.round(ny + dy * r);
+      if (x < 0 || x >= w || y < 0 || y >= h) continue;
+      ring.push(atG(x, y)); ringXY.push([x, y]);
+    }
+  }
+  if (!ring.length) return [];
+  const refL = median(ring);
+  const lo = refL - K; // luminance falloff that bounds the mound
+  const inBlob = new Uint8Array(w * h);
+  const stack = [];
+  for (const [x, y] of ringXY) {
+    const p = y * w + x;
+    if (skin[p] && !inBlob[p] && atG(x, y) >= lo) { inBlob[p] = 1; stack.push(p); }
+  }
+  const rMax2 = rMax * rMax;
+  let count = 0;
+  while (stack.length) {
+    const p = stack.pop(); count++;
+    const x = p % w, y = (p / w) | 0;
+    for (const [nx2, ny2] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+      if (nx2 < 0 || nx2 >= w || ny2 < 0 || ny2 >= h) continue;
+      const q = ny2 * w + nx2;
+      if (inBlob[q] || !skin[q]) continue;
+      const ddx = nx2 - nx, ddy = ny2 - ny;
+      if (ddx * ddx + ddy * ddy > rMax2) continue;
+      if (wallX !== null && wallSide < 0 && nx2 > wallX) continue; // never cross the cleavage
+      if (wallX !== null && wallSide > 0 && nx2 < wallX) continue;
+      if (atG(nx2, ny2) < lo) continue;
+      inBlob[q] = 1; stack.push(q);
+    }
+  }
+  if (count < 200) return []; // too small to trust
+  // hole fill: flood the non-blob background from the frame borders;
+  // whatever is neither blob nor background is an interior hole.
+  const bg = new Uint8Array(w * h);
+  const st2 = [];
+  const seedBg = (x, y) => {
+    const p = y * w + x;
+    if (!inBlob[p] && !bg[p]) { bg[p] = 1; st2.push(p); }
+  };
+  for (let x = 0; x < w; x++) { seedBg(x, 0); seedBg(x, h - 1); }
+  for (let y = 0; y < h; y++) { seedBg(0, y); seedBg(w - 1, y); }
+  while (st2.length) {
+    const p = st2.pop();
+    const x = p % w, y = (p / w) | 0;
+    for (const [nx2, ny2] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+      if (nx2 < 0 || nx2 >= w || ny2 < 0 || ny2 >= h) continue;
+      const q = ny2 * w + nx2;
+      if (!inBlob[q] && !bg[q]) { bg[q] = 1; st2.push(q); }
+    }
+  }
+  // boundary of the filled region, ordered angularly around its centroid
+  let bx = 0, by = 0, bn = 0;
+  const bpts = [];
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = y * w + x;
+      const filled = inBlob[p] || !bg[p];
+      if (!filled) continue;
+      if ((inBlob[p - 1] || !bg[p - 1]) && (inBlob[p + 1] || !bg[p + 1]) &&
+          (inBlob[p - w] || !bg[p - w]) && (inBlob[p + w] || !bg[p + w])) continue;
+      bpts.push([x, y]); bx += x; by += y; bn++;
+    }
+  }
+  if (bn < 12) return [];
+  bx /= bn; by /= bn;
+  bpts.sort((p1, p2) =>
+    Math.atan2(p1[1] - by, p1[0] - bx) - Math.atan2(p2[1] - by, p2[0] - bx));
+  // light circular smoothing (width 5) — kills flat-light scribble
+  const sm2 = bpts.map((_, i) => {
+    let sx = 0, sy = 0;
+    for (let k = -2; k <= 2; k++) {
+      const q = bpts[(i + k + bpts.length) % bpts.length];
+      sx += q[0]; sy += q[1];
+    }
+    return [sx / 5, sy / 5];
+  });
+  // drop backstop-limited points: boundary riding the rMax circle is the
+  // flood hitting the radius limit, not anatomy. The contour stays honestly
+  // open where the light gives no boundary (typically the top in flat light).
+  const kept = sm2.filter(([qx, qy]) => Math.hypot(qx - nx, qy - ny) <= rMax * 0.97);
+  if (kept.length < 12) return [];
+  const step = Math.max(1, Math.floor(kept.length / 240));
+  const pts = [];
+  for (let i = 0; i < kept.length; i += step) pts.push({ x: r1(kept[i][0]), y: r1(kept[i][1]) });
+  return pts;
+}
+
+// Fold curve: the existing single-column bottom-skin scan, extended across
+// the breast's horizontal extent. Per column, the first skin pixel from the
+// bottom — the boundary may be the fold, a garment edge, or the frame edge.
+function foldCurve(skin, w, h, x0, x1) {
+  const pts = [];
+  const lo = Math.max(0, Math.round(x0)), hi = Math.min(w - 1, Math.round(x1));
+  for (let x = lo; x <= hi; x += 8) {
+    let yb = -1;
+    for (let y = h - 1; y >= 0; y--) if (skin[y * w + x]) { yb = y; break; }
+    if (yb >= 0) pts.push([x, yb]);
+  }
+  return pts;
 }
 
 // Cleavage: darkest vertical shadow at nipple height, x in [0.48W, 0.70W].
@@ -661,6 +810,24 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
   if (yTop < 0 || yBot < 0 || yBot <= ny) return null;
   const nippleToFoldPx = yBot - ny;
 
+  // 5b. areola ellipse — 3D surface tilt from the polar boundary fit
+  const ell = fitAreolaEllipse(ar.polar, nx, ny);
+
+  // 5c. breast mound contour — luminance-region boundary around the nipple
+  const rMaxC = Math.min(Math.max(w, h), Math.round(nippleToFoldPx * 1.15));
+  const wallSide = nx < cx ? -1 : 1; // breast sits on the nipple's side of the cleavage
+  const contour = breastContour(rgb, w, h, skin, nx, ny, ar.radius_px, rMaxC,
+    12, cx - wallSide * 12, wallSide);
+
+  // 5d. fold curve across the contour's horizontal extent
+  // (fallback when the contour is sparse: nipple ± 1.5 areola diameters)
+  let fx0 = nx - ar.diameter_px * 1.5, fx1 = nx + ar.diameter_px * 1.5;
+  if (contour.length >= 8) {
+    const cxs = contour.map(p => p.x);
+    fx0 = Math.min(...cxs); fx1 = Math.max(...cxs);
+  }
+  const foldC = foldCurve(skin, w, h, fx0, fx1);
+
   // 6. scale anchor chain: barbell (chest plane) -> nails (hand plane) -> manual
   const barb = barbellAnchor(rgb, w, h, nx, ny);
   const nail = nailAnchor(rgb, w, h, nx, ny);
@@ -724,6 +891,9 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
     measured_px: {
       right_nipple: { x: r1(nx), y: r1(ny) },
       right_areola_diameter_px: r1(ar.diameter_px),
+      right_areola_ellipse: ell,
+      right_breast_contour_px: contour.map(p => [p.x, p.y]),
+      right_fold_curve_px: foldC,
       right_mound_width_px: Math.round(moundWpx),
       right_nipple_to_fold_px: Math.round(nippleToFoldPx),
       right_fold_y_px: yBot,
@@ -740,6 +910,12 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
     },
     modeled_physical: {
       right_areola_diameter_mm: mm(ar.diameter_px),
+      right_areola_ellipse_axes_mm: mmPerPx == null || !ell
+        ? null : [r1(ell.semi_major_px * mmPerPx), r1(ell.semi_minor_px * mmPerPx)],
+      right_breast_contour_mm: mmPerPx == null
+        ? null : contour.map(p => [r1(p.x * mmPerPx), r1(p.y * mmPerPx)]),
+      right_fold_curve_mm: mmPerPx == null
+        ? null : foldC.map(([qx, qy]) => [r1(qx * mmPerPx), r1(qy * mmPerPx)]),
       right_mound_width_mm: mm(moundWpx),
       right_nipple_to_fold_mm: mm(nippleToFoldPx),
     },
@@ -756,6 +932,16 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
     confidence: {
       areola_diameter: areolaConf + ' (' + ar.rays_used + ' radial rays, IQR ' +
         Math.round(ar.iqr[0]) + '-' + Math.round(ar.iqr[1]) + 'px)',
+      areola_ellipse: ell
+        ? 'medium (axis ratio ' + ell.axis_ratio + ' -> tilt ~' + Math.round(ell.tilt_deg) +
+          ' deg from camera axis; assumes a planar circular areola — tilts under ~15 deg are noise)'
+        : 'not resolved',
+      breast_contour: contour.length >= 8
+        ? 'medium (' + contour.length + ' mound-region boundary points over ' + Math.round(fx1 - fx0) +
+          'px; open where the light gives no boundary — typically the top in flat light)'
+        : 'not resolved (mound luminance region too small or fragmented)',
+      fold_curve: foldC.length + ' columns over ' + Math.round(fx1 - fx0) +
+        'px; boundary may be fold, garment edge, or frame edge',
       mound_width: 'medium (' + runs.length + ' skin run' + (runs.length === 1 ? '' : 's') +
         ' at nipple height; outer edge ' +
         (run[1] >= w - 2 ? 'at frame edge (may undermeasure)' : 'resolved in frame') + ')',
@@ -778,6 +964,8 @@ const NUM = v => typeof v === 'number' && isFinite(v);
 export function validateBreastTelemetry(obj) {
   const errors = [];
   const need = (cond, msg) => { if (!cond) errors.push(msg); };
+  const arr2 = a => Array.isArray(a) &&
+    a.every(p => Array.isArray(p) && p.length === 2 && NUM(p[0]) && NUM(p[1]));
   need(obj && typeof obj === 'object', 'not a JSON object');
   if (!obj || typeof obj !== 'object') return { ok: false, errors };
   need(obj.schema === SCHEMA, 'schema must be "' + SCHEMA + '" (got ' + JSON.stringify(obj.schema) + ')');
@@ -788,6 +976,12 @@ export function validateBreastTelemetry(obj) {
   for (const k of ['right_areola_diameter_px', 'right_mound_width_px', 'right_nipple_to_fold_px',
     'right_fold_y_px', 'cleavage_x_at_nipple_height_px'])
     need(NUM(mp[k]), 'missing measured_px.' + k);
+  const el = mp.right_areola_ellipse || {};
+  need(NUM(el.center_x) && NUM(el.center_y) && NUM(el.semi_major_px) && NUM(el.semi_minor_px) &&
+    NUM(el.major_axis_angle_deg) && NUM(el.tilt_deg) && NUM(el.axis_ratio),
+    'incomplete measured_px.right_areola_ellipse');
+  need(arr2(mp.right_breast_contour_px), 'measured_px.right_breast_contour_px must be [[x,y],...]');
+  need(arr2(mp.right_fold_curve_px), 'measured_px.right_fold_curve_px must be [[x,y],...]');
   need(mp.nail_anchor_median_width_px == null || NUM(mp.nail_anchor_median_width_px),
     'measured_px.nail_anchor_median_width_px must be a number or null');
   need(mp.barbell_ball_diameter_px == null || NUM(mp.barbell_ball_diameter_px),
@@ -799,12 +993,21 @@ export function validateBreastTelemetry(obj) {
   const ph = obj.modeled_physical || {};
   for (const k of ['right_areola_diameter_mm', 'right_mound_width_mm', 'right_nipple_to_fold_mm'])
     need(ph[k] == null || NUM(ph[k]), 'modeled_physical.' + k + ' must be a number or null');
+  need(ph.right_areola_ellipse_axes_mm == null ||
+    (Array.isArray(ph.right_areola_ellipse_axes_mm) && ph.right_areola_ellipse_axes_mm.length === 2 &&
+      NUM(ph.right_areola_ellipse_axes_mm[0]) && NUM(ph.right_areola_ellipse_axes_mm[1])),
+    'modeled_physical.right_areola_ellipse_axes_mm must be [a,b] or null');
+  need(ph.right_breast_contour_mm == null || arr2(ph.right_breast_contour_mm),
+    'modeled_physical.right_breast_contour_mm must be [[x,y],...] or null');
+  need(ph.right_fold_curve_mm == null || arr2(ph.right_fold_curve_mm),
+    'modeled_physical.right_fold_curve_mm must be [[x,y],...] or null');
   need(obj.left_breast && typeof obj.left_breast === 'object', 'missing left_breast');
   const ce = obj.cup_estimate || {};
   need(ce.method && ce.assumption && typeof ce.verdict === 'string' && ce.band_table && ce.note,
     'incomplete cup_estimate');
   const cf = obj.confidence || {};
-  for (const k of ['areola_diameter', 'mound_width', 'nipple_to_fold', 'physical_mm', 'cup', 'left_breast'])
+  for (const k of ['areola_diameter', 'areola_ellipse', 'breast_contour', 'fold_curve',
+    'mound_width', 'nipple_to_fold', 'physical_mm', 'cup', 'left_breast'])
     need(typeof cf[k] === 'string', 'missing confidence.' + k);
   return { ok: errors.length === 0, errors };
 }
@@ -822,16 +1025,37 @@ export function drawBreastOverlay(canvas, img, rep) {
   const X = v => v * sx, Y = v => v * sy;
   const ny = Y(mp.right_nipple.y);
   ctx.lineWidth = Math.max(2, w / 400);
-  // areola circle
-  ctx.strokeStyle = '#f0f';
-  ctx.beginPath();
-  ctx.arc(X(mp.right_nipple.x), ny, (mp.right_areola_diameter_px / 2) * sx, 0, 7);
-  ctx.stroke();
+  // areola ellipse fit (magenta) — supersedes the old median circle; the
+  // squash encodes the areola's 3D tilt away from the camera
+  const el = mp.right_areola_ellipse;
+  if (el) {
+    ctx.strokeStyle = '#f0f';
+    ctx.beginPath();
+    ctx.ellipse(X(el.center_x), Y(el.center_y),
+      el.semi_major_px * sx, el.semi_minor_px * sy,
+      el.major_axis_angle_deg * Math.PI / 180, 0, 7);
+    ctx.stroke();
+  }
   // nipple dot
   ctx.fillStyle = '#f00';
   ctx.beginPath();
   ctx.arc(X(mp.right_nipple.x), ny, Math.max(3, w / 250), 0, 7);
   ctx.fill();
+  // breast silhouette contour (orange) — break the path where points jump,
+  // so open sections don't get bridged by straight lines
+  const bc = mp.right_breast_contour_px || [];
+  ctx.strokeStyle = '#fa0';
+  ctx.lineWidth = Math.max(2, w / 500);
+  ctx.beginPath();
+  let bx0 = null, by0 = null;
+  for (const [qx, qy] of bc) {
+    const Xq = X(qx), Yq = Y(qy);
+    if (bx0 === null || Math.hypot(Xq - bx0, Yq - by0) > 40 * sx) ctx.moveTo(Xq, Yq);
+    else ctx.lineTo(Xq, Yq);
+    bx0 = Xq; by0 = Yq;
+  }
+  ctx.stroke();
+  ctx.lineWidth = Math.max(2, w / 400);
   // cleavage vertical
   ctx.strokeStyle = '#ff0';
   ctx.beginPath();
@@ -844,11 +1068,14 @@ export function drawBreastOverlay(canvas, img, rep) {
   ctx.moveTo(X(mp.cleavage_x_at_nipple_height_px), ny);
   ctx.lineTo(X(mp.cleavage_x_at_nipple_height_px + mp.right_mound_width_px), ny);
   ctx.stroke();
-  // fold line
+  // fold curve (green polyline) — supersedes the old straight fold line
+  const fc = mp.right_fold_curve_px || [];
   ctx.strokeStyle = '#0f0';
   ctx.beginPath();
-  ctx.moveTo(X(mp.cleavage_x_at_nipple_height_px), Y(mp.right_fold_y_px));
-  ctx.lineTo(X(mp.cleavage_x_at_nipple_height_px + mp.right_mound_width_px), Y(mp.right_fold_y_px));
+  fc.forEach(([qx, qy], i) => {
+    const Xq = X(qx), Yq = Y(qy);
+    if (i) ctx.lineTo(Xq, Yq); else ctx.moveTo(Xq, Yq);
+  });
   ctx.stroke();
   ctx.font = 'bold 13px sans-serif';
   ctx.fillStyle = '#ff0';
@@ -857,4 +1084,9 @@ export function drawBreastOverlay(canvas, img, rep) {
   ctx.fillStyle = '#0ff';
   ctx.fillText('mound ' + mp.right_mound_width_px + 'px',
     X(mp.cleavage_x_at_nipple_height_px) + 6, ny + 20 * sy);
+  if (el) {
+    ctx.fillStyle = '#f0f';
+    ctx.fillText('tilt ~' + Math.round(el.tilt_deg) + '°',
+      X(el.center_x) + el.semi_major_px * sx + 6, Y(el.center_y) + 4);
+  }
 }
