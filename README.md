@@ -44,49 +44,11 @@ Each tool lives in its own directory with its own README:
   `age/`'s classifier, `attraction/`'s telemetry), with one unified report
   and JSON export. All on-device.
 
-## The site
-
-The root page (`index.html` + `assets/`) is a shell around the instruments —
-it renders them, it never runs them. No instrument imports anything from
-`assets/`, so the site can be rebuilt without touching a single tool.
-
-- **`assets/registry.js`** — the single source of truth. Every instrument, its
-  deep links, what it downloads, whether it needs the network, and which
-  `localStorage` keys it owns. The rack, the filters, the command palette, the
-  reuse map and the vault all read from this one file.
-- **`assets/cards.js`** — the shared card renderer (root rack + category hubs).
-- **`assets/vault.js`** — reads local state, builds and restores backups.
-- **`assets/map.js`** — the reuse map: the real dependency graph, so you can see
-  what shares a model before tapping a 174 MB instrument on a tether.
-- **`assets/app.js`** — rack, filters, palette, drawers, keyboard.
-- **`assets/site.css`** — dark by default (every instrument is), with a
-  high-contrast DAYLIGHT mode for reading a phone outdoors.
-
-No web fonts, no CDN, no analytics, and deliberately **no service worker** —
-caching this origin could hand an instrument a stale model or script, and a
-broken instrument is worse than a page that loads a beat slower.
-
-### The vault
-
-Every instrument stores its state in `localStorage`, which is per-origin: one
-"clear site data" wipes a year of scored weeks. The vault (press `v`) lists
-every key with a plain-English summary, and round-trips the whole lot through
-one `tools_vault/v1` backup file. It carries values as the raw strings the
-tools wrote — nothing is reshaped — and writes only on an explicit confirmed
-restore, offering a copy of the current state first.
-
-`fd_apiKey` (the frame-describe vision key) is flagged as a secret: its value
-is never rendered on the page and is left out of backups unless you tick the
-box.
-
 ## Adding a tool
 
 1. Create `<tool-name>/` with a `README.md` explaining what it is and how to run it.
 2. Keep it static if it can be static. If it needs a backend, say so in the README.
-3. Add an entry to `assets/registry.js` — that is what puts it on the splash
-   page, in the search palette and on the reuse map. If it saves anything,
-   register its `localStorage` keys in `STORAGE` too, so the vault can back
-   them up.
+3. Link it from the splash page (`index.html`).
 
 ## Deploy
 
@@ -96,6 +58,4 @@ https://danfr4nk.github.io/tools/ — every tool is reachable at
 
 Note: localStorage is per-origin, so tools moved here from elsewhere on
 `danfr4nk.github.io` keep their saved data as long as their storage keys are
-unchanged. Do not rename a tool's localStorage keys on move — the vault reads
-them under exactly the names the instruments write, and a rename orphans
-saved runs.
+unchanged. Do not rename a tool's localStorage keys on move.

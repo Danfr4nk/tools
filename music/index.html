@@ -1,85 +1,53 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>music — tools</title>
-<meta name="description" content="Taste diagnostics and music tools: MusicTrainer, AUTOPSY, hook2piano, MELODY.">
-<meta name="theme-color" content="#05070a">
-<meta name="color-scheme" content="dark light">
-<link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="../assets/site.css">
-<script>
-  try {
-    var p = JSON.parse(localStorage.getItem('tools.site.v1') || '{}');
-    if (p.theme === 'day') {
-      document.documentElement.setAttribute('data-theme', 'day');
-      var m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = '#eef1f4';
-    }
-  } catch (e) {}
-</script>
+<style>
+  body { background:#101216; color:#e8eaf0; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:40px 20px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  h1 { font-size:26px; }
+  p.dim { color:#9aa0ad; }
+  a { color:#61afef; }
+  .tool { border:1px solid #2a2e37; border-radius:12px; padding:16px 18px; margin:14px 0; background:#181b21; }
+  .tool h2 { margin:0 0 6px; font-size:18px; }
+  .tool p { margin:0; color:#9aa0ad; font-size:14px; }
+  .back { font-size:13px; margin-bottom:18px; display:block; }
+</style>
 </head>
 <body>
-
-<nav class="topbar">
-  <a class="mark" href="../">TOOLS<span>/</span></a>
-  <span class="count mono" style="flex:1;color:var(--dim);letter-spacing:.2em">MUSIC</span>
-  <a class="iconbtn" href="../" style="text-decoration:none"><span aria-hidden="true">←</span><span class="t">ALL INSTRUMENTS</span></a>
-</nav>
-
 <div class="wrap">
-  <header class="hero">
-    <span class="cnr tl"></span><span class="cnr tr"></span><span class="cnr bl"></span><span class="cnr br"></span>
-    <h1 style="font-size:clamp(30px,8vw,62px)">MUSIC<span class="slash">/</span></h1>
-    <p class="tag">The taste experiment and the tools around it. Two instruments score and dissect what you actually
-      keep; two take a piece of music apart and hand back the notes. <b>MusicTrainer and AUTOPSY share one notes
-      store</b>, so a "why?" written in either shows up in the other.</p>
-    <div class="statline mono" id="statline"></div>
-  </header>
-
-  <noscript>
-    <div class="noscript">
-      <b>JavaScript is off.</b> Direct links:
-      <div style="margin-top:8px">
-        <a href="musictrainer/">MusicTrainer</a><a href="track-autopsy/">AUTOPSY</a>
-        <a href="hook2piano/docs/">hook2piano</a><a href="melody/">MELODY</a>
-      </div>
-    </div>
-  </noscript>
-
-  <div class="rack" id="rack" style="margin-top:22px"></div>
-
-  <footer class="site">
-    <span>static site · everything here runs in the browser</span>
-    <span><a href="../">← all instruments</a></span>
-  </footer>
+  <a class="back" href="../">← all tools</a>
+  <h1>music</h1>
+  <p class="dim">Taste diagnostics, training instruments, and music tools.</p>
+  <div class="tool">
+    <h2><a href="musictrainer/">MusicTrainer</a></h2>
+    <p>Weekly scoring instrument for the taste experiment — Discover Weekly +
+       Release Radar scorecards. Per track: 1–10 score, skip/like, ADDED?
+       yes/no. Prediction paste with timestamped lock, week JSON
+       export/import.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="track-autopsy/">AUTOPSY</a></h2>
+    <p>Driver-dissection game — answers <em>what it is about the track</em>
+       that did it. Per track: triage + score, WHAT DID IT?
+       check-all-that-apply across 16 drivers, KILL ONE load-bearing-element
+       pick. Drivers ranked by lift over base keep rate.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="hook2piano/">hook2piano</a></h2>
+    <p>TheoryTab → one-page piano sheet. Paste a TheoryTab URL or tab ID, get
+       a printable grand-staff score — left hand plays the chords, right hand
+       the melody, with chord symbols and Roman numerals. Runs in the browser
+       via Pyodide.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="melody/">MELODY</a></h2>
+    <p>Upload a finished song — it finds the lead melody, puts it on a piano
+       roll, plays it back, and exports MIDI for your DAW. Runs 100% on your
+       device. Nothing is uploaded.</p>
+  </div>
 </div>
-
-<script type="module">
-  import { INSTRUMENTS } from '../assets/registry.js';
-  import { card, wireCards } from '../assets/cards.js';
-  import { scan, byTool, fmtBytes } from '../assets/vault.js';
-
-  const list = INSTRUMENTS.filter((i) => i.domain === 'music');
-  const s = scan();
-  const state = s.ok ? byTool(s) : {};
-
-  /* the registry's hrefs are relative to the repo root; this page sits one level in */
-  document.getElementById('rack').innerHTML =
-    list.map((i, n) => card(i, n + 1, state, { prefix: '../' })).join('');
-  wireCards(document.getElementById('rack'), (id) => {
-    const i = list.find((x) => x.id === id);
-    if (i) location.href = /^https?:/.test(i.href) ? i.href : '../' + i.href;
-  });
-
-  const held = list.filter((i) => state[i.id] && state[i.id].keys);
-  const bytes = held.reduce((a, i) => a + state[i.id].bytes, 0);
-  document.getElementById('statline').innerHTML = [
-    `<span class="live">●</span> <b>${list.length}</b> instruments`,
-    `<b>${list.filter((i) => i.posture.net === 'none').length}</b> need no network`,
-    held.length ? `<b>${fmtBytes(bytes)}</b> saved locally across <b>${held.length}</b>` : 'nothing saved here yet',
-    `<a href="../" style="color:inherit">vault &amp; backups live on the root page →</a>`,
-  ].map((x) => `<span>${x}</span>`).join('');
-</script>
 </body>
 </html>

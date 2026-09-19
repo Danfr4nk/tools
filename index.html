@@ -1,170 +1,75 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>tools — instrument rack</title>
-<meta name="description" content="Dan's instrument rack: diagnostics for faces, bodies, taste and text. Every web instrument runs in the browser — no accounts, no uploads, no tracking.">
-<meta name="theme-color" content="#05070a">
-<meta name="color-scheme" content="dark light">
-<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="assets/icon.svg">
-<link rel="stylesheet" href="assets/site.css">
-<script>
-  /* set the theme before first paint so daylight mode never flashes dark */
-  try {
-    var p = JSON.parse(localStorage.getItem('tools.site.v1') || '{}');
-    if (p.theme === 'day') {
-      document.documentElement.setAttribute('data-theme', 'day');
-      var m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = '#eef1f4';
-    }
-  } catch (e) {}
-</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tools</title>
+<style>
+  body { background:#101216; color:#e8eaf0; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:40px 20px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  h1 { font-size:26px; }
+  p.dim { color:#9aa0ad; }
+  a { color:#61afef; }
+  .tool { border:1px solid #2a2e37; border-radius:12px; padding:16px 18px; margin:14px 0; background:#181b21; }
+  .tool h2 { margin:0 0 6px; font-size:18px; }
+  .tool p { margin:0; color:#9aa0ad; font-size:14px; }
+  h2.cat { font-size:13px; text-transform:uppercase; letter-spacing:2px; color:#61afef; margin:34px 0 4px; }
+</style>
 </head>
 <body>
-
-<nav class="topbar">
-  <a class="mark" href="./">TOOLS<span>/</span></a>
-  <button class="searchbtn" id="btn-search" aria-label="Search every instrument">
-    <span aria-hidden="true">⌕</span>
-    <span class="lbl">search instruments, metrics, models…</span>
-    <kbd>⌘K</kbd>
-  </button>
-  <button class="iconbtn" id="btn-map" aria-pressed="false" title="Dependency map (m)"><span aria-hidden="true">◈</span><span class="t">MAP</span></button>
-  <button class="iconbtn" id="btn-vault" title="Local data vault (v)"><span class="dot" aria-hidden="true"></span><span class="t">VAULT</span></button>
-  <button class="iconbtn" id="btn-theme" title="Daylight mode (t)"><span aria-hidden="true">◐</span><span class="t">DAYLIGHT</span></button>
-  <button class="iconbtn" id="btn-help" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><span aria-hidden="true">?</span></button>
-</nav>
-
 <div class="wrap">
-
-  <header class="hero">
-    <span class="cnr tl"></span><span class="cnr tr"></span><span class="cnr bl"></span><span class="cnr br"></span>
-    <div class="herogrid">
-      <div>
-        <h1>TOOLS<span class="slash">/</span></h1>
-        <p class="tag">Instruments, not apps. Each one answers a narrow question about faces, bodies, taste or text, and
-          shows its working — the ratio it measured, the model that produced the number, the reason the number might be wrong.
-          <b>Every web instrument computes on your device.</b> No accounts, no uploads, no analytics, no service worker.</p>
-        <div class="statline mono" id="statline"></div>
-      </div>
-      <aside class="manifest" aria-label="Instruments by domain">
-        <div class="mh">MANIFEST</div>
-        <div id="manifest"></div>
-      </aside>
-    </div>
-    <div class="scope">
-      <canvas id="scope" aria-label="Local state held by each instrument — click a bar to jump to it"></canvas>
-      <span class="scopelbl">LOCAL STATE · BYTES PER INSTRUMENT<span class="opt"> · CLICK A BAR</span></span>
-    </div>
-  </header>
-
-  <div class="resume" id="resume" hidden></div>
-
-  <section id="view-rack">
-    <div class="filters">
-      <div id="domains" style="display:flex;gap:8px;flex-wrap:wrap"></div>
-      <span style="width:1px;height:20px;background:var(--line)"></span>
-      <div id="facets" style="display:flex;gap:8px;flex-wrap:wrap"></div>
-      <span class="spacer"></span>
-      <span class="count mono" id="count"></span>
-    </div>
-
-    <noscript>
-      <div class="noscript">
-        <b>JavaScript is off</b>, so the rack, the search and the vault cannot render. Every instrument is still a plain page:
-        <div style="margin-top:8px">
-          <a href="workbench/">workbench</a><a href="attraction/">attraction suite</a><a href="age/">age</a><a href="kinship/">kinship</a>
-          <a href="body/">body</a><a href="modbod/">modbod</a><a href="music/">music suite</a><a href="co-watch/">co-watch</a>
-        </div>
-      </div>
-    </noscript>
-
-    <div class="rack" id="rack"></div>
-
-    <div class="secthead">INDEXES</div>
-    <p class="dnote">The two grouping pages, kept reachable on their own:
-      <a href="attraction/">attraction — instrument index</a> ·
-      <a href="music/">music — category index</a>.
-      Local-only work (stylometry, the Python CLIs) lives in the repo, not here.</p>
-  </section>
-
-  <section id="view-map" hidden>
-    <div class="mapwrap">
-      <div class="maphead">
-        <span>REUSE MAP — what shares a model with what</span>
-        <span class="key"><i class="sw tool"></i>instrument</span>
-        <span class="key"><i class="sw shared"></i>shared module</span>
-        <span class="key"><i class="sw model"></i>model weights</span>
-        <span class="key"><i class="sw cdn"></i>runtime</span>
-        <span class="key"><i class="sw api"></i>network api</span>
-        <button class="btn rst" id="map-reset">RESET</button>
-      </div>
-      <canvas id="mapcanvas" aria-label="Dependency map of every instrument. The same information is listed on each instrument's card."></canvas>
-      <div class="maptip" id="maptip"></div>
-      <p class="mapnote">Drag a node, scroll to zoom, drag the background to pan. Click an instrument to open it; click a
-        model, runtime or API to pin everything that touches it — which is also the answer to
-        <i>is this already cached, or is it about to pull 174 MB</i>. Instruments with no spokes need nothing but the page itself.</p>
-    </div>
-  </section>
-
-  <footer class="site">
-    <span>static site · no build step · served from <code>main</code> by GitHub Pages</span>
-    <span><a href="https://github.com/danfr4nk/tools">source ↗</a> · <span id="year"></span></span>
-  </footer>
-</div>
-
-<div class="scrim" id="scrim"></div>
-
-<div class="pal" id="pal" role="dialog" aria-modal="true" aria-label="Command palette">
-  <div class="palbox">
-    <input id="palinput" type="text" role="combobox" aria-expanded="true" aria-controls="palres"
-           placeholder="jump to anything — instrument, metric, model, file, action" autocomplete="off" spellcheck="false">
-    <div class="palres" id="palres" role="listbox"></div>
-    <div class="palfoot">
-      <span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> open</span>
-      <span><kbd>⌘</kbd><kbd>↵</kbd> new tab</span><span><kbd>esc</kbd> close</span>
-    </div>
+  <h1>tools</h1>
+  <p class="dim">Temporary index — the real splash page is coming.</p>
+  <div class="tool">
+    <h2><a href="workbench/">workbench</a></h2>
+    <p>One photo in, every instrument out — shared face detection fans out to
+       age estimation, kinship comparison, and facial telemetry in a single
+       pass, with one unified report. Nothing is uploaded.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="body/">body</a></h2>
+    <p>Telemetry mannequin — import a <span style="font-family:monospace">breast_telemetry/v1</span>
+       JSON and the bust rebuilds to scale on a neutral grey mannequin, in 3D and 2D.
+       Nothing is uploaded.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="attraction/">attraction</a></h2>
+    <p>Facial-preference diagnostic, scenario telemetry &amp; ratings, face book,
+       frame-describe lexicon, body metrics, telemetry lab.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="age/">age</a></h2>
+    <p>Visual age estimation — Vision Transformer age-bracket classifier,
+       runs 100% in the browser. Nothing is uploaded.</p>
+  </div>
+  <h2 class="cat"><a href="music/" style="color:#61afef; text-decoration:none;">music</a></h2>
+  <div class="tool">
+    <h2><a href="music/musictrainer/">MusicTrainer</a></h2>
+    <p>Weekly scoring instrument for the taste experiment — Discover Weekly +
+       Release Radar scorecards. Per track: 1–10 score, skip/like, ADDED?
+       yes/no. Prediction paste with timestamped lock, week JSON
+       export/import.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="music/track-autopsy/">AUTOPSY</a></h2>
+    <p>Driver-dissection game — answers <em>what it is about the track</em>
+       that did it. Per track: triage + score, WHAT DID IT?
+       check-all-that-apply across 16 drivers, KILL ONE load-bearing-element
+       pick. Drivers ranked by lift over base keep rate.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="music/hook2piano/">hook2piano</a></h2>
+    <p>TheoryTab → one-page piano sheet. Paste a TheoryTab URL or tab ID, get
+       a printable grand-staff score — left hand plays the chords, right hand
+       the melody, with chord symbols and Roman numerals. Runs in the browser
+       via Pyodide.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="music/melody/">MELODY</a></h2>
+    <p>Upload a finished song — it finds the lead melody, puts it on a piano
+       roll, plays it back, and exports MIDI for your DAW. Runs 100% on your
+       device. Nothing is uploaded.</p>
   </div>
 </div>
-
-<aside class="drawer" id="vault" role="dialog" aria-modal="true" aria-label="Local data vault">
-  <header>
-    <h2>VAULT</h2>
-    <button class="x" id="vault-refresh">RE-READ</button>
-    <button class="x" id="vault-close" aria-label="Close vault">CLOSE ✕</button>
-  </header>
-  <div class="body" id="vaultbody"></div>
-  <div class="foot">
-    <button class="btn primary" id="vault-export">⇩ BACK UP EVERYTHING</button>
-    <button class="btn" id="vault-import">⇧ RESTORE FROM FILE</button>
-    <input type="file" id="vault-file" accept="application/json,.json" hidden>
-  </div>
-</aside>
-
-<aside class="drawer" id="help" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
-  <header><h2>KEYS</h2><button class="x" id="help-close" aria-label="Close">CLOSE ✕</button></header>
-  <div class="body">
-    <table class="keys">
-      <tr><td><kbd>⌘K</kbd> / <kbd>/</kbd></td><td>command palette — every instrument, deep link, dependency and action</td></tr>
-      <tr><td><kbd>m</kbd></td><td>toggle the reuse map</td></tr>
-      <tr><td><kbd>v</kbd></td><td>open the vault</td></tr>
-      <tr><td><kbd>t</kbd></td><td>daylight / dark</td></tr>
-      <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>open instrument 01–09 straight from the rack</td></tr>
-      <tr><td><kbd>?</kbd></td><td>this panel</td></tr>
-      <tr><td><kbd>esc</kbd></td><td>close whatever is open</td></tr>
-    </table>
-    <div class="dsect">WHAT THIS PAGE DOES WITH YOUR DATA</div>
-    <p class="dnote">It reads the same <code>localStorage</code> keys the instruments already write, under the exact names they
-      already use, and summarises them. It writes nothing unless you confirm a restore. The frame-describe API key is
-      detected so it can be <b>kept out of backups</b> — its value is never rendered on this page.</p>
-    <p class="dnote">There is deliberately <b>no service worker</b>: caching this origin would risk serving an instrument a
-      stale model or script, and a broken instrument is worse than a page that loads a beat slower.</p>
-  </div>
-</aside>
-
-<div class="toast" id="toast" role="status" aria-live="polite"></div>
-
-<script type="module" src="assets/app.js"></script>
 </body>
 </html>
