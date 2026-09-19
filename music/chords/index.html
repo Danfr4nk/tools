@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>CHORDS — audio → chord chart</title>
+<link rel="stylesheet" href="style.css?v=20260919">
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="../">← music tools</a>
+  <h1>CHORDS</h1>
+  <p class="dim">Upload a finished song. It finds the tempo, tracks the beats, and names the
+     chord on each one — then draws the whole progression as a timeline you can tap to hear.
+     Everything runs on your device — nothing is uploaded.</p>
+
+  <div id="drop" class="drop">
+    <div class="drop-inner">
+      <div class="big">drop a song here</div>
+      <div class="dim">or tap to browse — mp3, wav, m4a, ogg, flac</div>
+    </div>
+    <input type="file" id="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.oga,.flac,.aif,.aiff" class="filepick" aria-label="Choose an audio file to analyze">
+  </div>
+
+  <div id="prog" class="prog" hidden><div id="progfill"></div></div>
+  <div id="status" class="status"></div>
+  <div id="err" class="err" hidden></div>
+
+  <section id="results" hidden>
+    <div class="filerow"><span id="fname" class="fname"></span><span id="stats" class="stats dim"></span></div>
+    <div class="transport">
+      <button id="playbtn" class="btn primary">▶ play chords</button>
+      <button id="stopbtn" class="btn">⏹</button>
+      <label class="chk"><input type="checkbox" id="origtoggle"> original underneath</label>
+      <span id="time" class="dim time">0.0s</span>
+    </div>
+    <canvas id="tl"></canvas>
+    <div class="hint dim">tap a block to hear the chord · drag to scroll · scroll to zoom</div>
+    <div id="chart" class="chart"></div>
+    <div class="exportrow">
+      <button id="jsonbtn" class="btn">⬇ chords JSON</button>
+    </div>
+  </section>
+
+  <p class="dim foot">v1 — chroma + beat-tracked template matching, 24 major/minor triads.
+  Dense mixes and 7th/extended chords can fool it; it will call F#maj7 "F#" or "F"
+  depending on which chord tone shouts loudest. That's the honest limit of v1.</p>
+</div>
+<script type="module" src="app.js?v=20260919"></script>
+</body>
+</html>
