@@ -304,7 +304,10 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
   async function instrumentBreast(fileName) {
     $('runstate').textContent = 'running breast telemetry…';
-    const rep = measureBreastTelemetry(photo.rgb, photo.w, photo.h, fileName);
+    // faces feed the nipple-seed plausibility veto (seeds inside a face box
+    // are rejected as non-anatomical); body-only mode passes [].
+    const rep = measureBreastTelemetry(photo.rgb, photo.w, photo.h, fileName,
+      faces.map(f => f.bbox));
     if (!rep) throw new Error('breast telemetry: could not resolve nipple/areola/nail landmarks in this photo');
     const v = validateBreastTelemetry(rep);
     if (!v.ok) throw new Error('breast telemetry schema invalid: ' + v.errors.join('; '));

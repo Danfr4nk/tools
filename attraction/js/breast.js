@@ -7,12 +7,17 @@
 //
 // Pipeline (pure functions over an RGB buffer — no DOM, no models):
 //   1. YCrCb skin mask (Cr 130-205, Cb 80-140 — widened for warm light) +
-//      morphological close/open.
+//      morphological close/open. Bright neutrals (blinds, walls) are
+//      excluded even when they pass Cr/Cb — they used to let the mound
+//      contour flood onto window blinds.
 //   2. Nipple seeding, areola-first: local V minima in skin with dark cores
 //      (kills the red-lips false positive), scored by dark-core depth and
 //      areola-redness (a-channel annulus vs background), ranked by cluster
 //      density then redness, refined to the pinkest point (nipple tip).
 //      The old HSV dark-red-disk detector locked onto hair; it is gone.
+//      Plausibility vetoes: elongated dark cores (finger gaps/wrinkles)
+//      and seeds inside a detected face box are rejected; if nothing
+//      survives, the pipeline returns null instead of fitting fingers.
 //   3. Areola: radial-edge scan from the nipple center on the CIELAB
 //      a-channel — 90 rays, steepest negative a-gradient in 30-130px with
 //      edge strength < -0.35; median of trimmed radii. (Robust where
@@ -43,14 +48,20 @@ export const NIPPLE_SEED_MAX_Y = 0.72; // seeds below this are nail polish, not 
 
 /* ---------------- color conversions (OpenCV semantics) ---------------- */
 
-function ycrcbSkin(r, g, b) {
+export function ycrcbSkin(r, g, b) {
   const Y = 0.299 * r + 0.587 * g + 0.114 * b;
   const Cr = (r - Y) * 0.713 + 128;
   const Cb = (b - Y) * 0.564 + 128;
   // Widened for warm/incandescent light: measured torso skin hits Cr ~183
   // under warm bulbs, which the old 135-180 band excluded entirely
   // (leaving a Swiss-cheese mask and garbage downstream geometry).
-  return Cr >= 130 && Cr <= 205 && Cb >= 80 && Cb <= 140;
+  if (!(Cr >= 130 && Cr <= 205 && Cb >= 80 && Cb <= 140)) return false;
+  // Bright neutrals pass the Cr/Cb band (warm-white blinds ~ Cr 135 /
+  // Cb 116) and used to let the mound-contour flood leak onto window
+  // blinds and walls. Near-white with no chroma is never skin.
+  const Vv = Math.max(r, g, b);
+  if (Vv > 215 && (Vv - Math.min(r, g, b)) / Vv < 0.20) return false;
+  return true;
 }
 
 // Returns [h (0-180), s (0-255), v (0-255)] — OpenCV 8-bit HSV.
@@ -301,11 +312,39 @@ const r1 = v => Math.round(v * 10) / 10;
 
 /* ---------------- pipeline stages ---------------- */
 
-function skinMask(rgb, w, h) {
+export function skinMask(rgb, w, h) {
   const mask = new Uint8Array(w * h);
   for (let i = 0, j = 0; i < mask.length; i++, j += 3)
     if (ycrcbSkin(rgb[j], rgb[j + 1], rgb[j + 2])) mask[i] = 1;
   return mask;
+}
+
+// Plausibility veto over nipple-seed minima blobs (exported for tests).
+// Drops elongated dark cores (finger gaps, wrinkles, mouth lines — a
+// nipple's dark dimple is compact; the 3:1 bar is generous to
+// shadow-streaked nipples and still kills finger creases at 5:1+) and
+// anything inside a detected face box (faces: [[x1,y1,x2,y2],...] or
+// [{bbox:[x1,y1,x2,y2]}]). Returns {kept, vetoed}.
+export function vetoSeedBlobs(blobs, faces) {
+  let vetoed = 0;
+  const kept = [];
+  for (const b of blobs) {
+    const bw = b.bbox.w, bh = b.bbox.h;
+    if (Math.max(bw, bh) / Math.max(Math.min(bw, bh), 1) > 3) { vetoed++; continue; }
+    if (faces && faces.length) {
+      const fcx = b.centroid.x, fcy = b.centroid.y;
+      let inFace = false;
+      for (const f of faces) {
+        const bb = f.bbox || f; // [x1, y1, x2, y2]
+        const ex = (bb[2] - bb[0]) * 0.12, ey = (bb[3] - bb[1]) * 0.12;
+        if (fcx >= bb[0] - ex && fcx <= bb[2] + ex &&
+            fcy >= bb[1] - ey && fcy <= bb[3] + ey) { inFace = true; break; }
+      }
+      if (inFace) { vetoed++; continue; }
+    }
+    kept.push(b);
+  }
+  return { kept, vetoed };
 }
 
 // Nipple seeding, areola-first (replaces the HSV dark-red-disk detector,
@@ -319,8 +358,17 @@ function skinMask(rgb, w, h) {
 //      throws several nearby minima; moles are isolated), then redness.
 //   4. Refine: pinkest (max smoothed a-channel, V > 90) point within 60px —
 //      the nipple tip. Darkest-pixel refinement was rejected: shadows win.
+//   5. Plausibility vetoes (2026-09-19): the seeder locked onto a hand —
+//      finger creases are dark V-minima in skin, they cluster like a
+//      nipple/areola complex, and a dark window behind inflated their
+//      redness. Vetoed candidates: elongated dark cores (finger gaps,
+//      wrinkles — a nipple core is compact) and anything inside a detected
+//      face box (the workbench passes its SCRFD faces in). When every
+//      candidate is vetoed the pipeline fails honestly instead of fitting
+//      an ellipse to fingers and reading the cup "firm".
 // Validated against both reference photos (lands on the true nipple).
-function detectNipple(rgb, w, h, skin) {
+export function detectNipple(rgb, w, h, skin, faces) {
+  // faces: optional array of [x1,y1,x2,y2] (or {bbox:[x1,y1,x2,y2]})
   const n = w * h;
   const V = new Float64Array(n), A = new Float64Array(n);
   for (let i = 0, j = 0; i < n; i++, j += 3) {
@@ -348,8 +396,11 @@ function detectNipple(rgb, w, h, skin) {
   }
   const { labels, blobs } = labelBlobs(pk, w, h, 0);
 
+  // Veto pass over the raw minima blobs, before any scoring.
+  const { kept, vetoed } = vetoSeedBlobs(blobs, faces);
+
   const cands = [];
-  for (const b of blobs) {
+  for (const b of kept) {
     const cx = b.centroid.x, cy = b.centroid.y;
     const coreV = [], ringV = [], annA = [], bgA = [];
     const R = 130;
@@ -373,7 +424,7 @@ function detectNipple(rgb, w, h, skin) {
     const redness = median(annA) - median(bgA);
     if (dV > 12 && redness > 2) cands.push({ x: cx, y: cy, dV, redness });
   }
-  if (!cands.length) return null;
+  if (!cands.length) return { vetoed }; // every candidate vetoed: honest failure, no x/y
 
   // cluster density: neighbours within 70px
   for (const c of cands) {
@@ -399,7 +450,7 @@ function detectNipple(rgb, w, h, skin) {
       if (V[i] > 90 && As[i] > ba) { ba = As[i]; bx = x; by = y; }
     }
   }
-  return { x: bx, y: by, areolaSeed: win };
+  return { x: bx, y: by, areolaSeed: win, vetoed };
 }
 
 // Areola: radial-edge scan on the CIELAB a-channel from the nipple center.
@@ -770,8 +821,10 @@ function cupVerdict(moundWpx, nippleToFoldPx) {
 
 /* ---------------- main measurement: breast_telemetry/v1 ---------------- */
 
-export function measureBreastTelemetry(rgb, w, h, sourceName) {
+export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
   // rgb: Float32Array/Uint8Array/Buffer of RGB bytes, length w*h*3.
+  // faces: optional [[x1,y1,x2,y2],...] from the workbench's face detector —
+  //   nipple seeds inside a face box are vetoed (see detectNipple).
   // Returns the exact breast_telemetry/v1 schema object, or null when the
   // pipeline cannot resolve the required landmarks.
   if (!rgb || rgb.length < w * h * 3) return null;
@@ -782,10 +835,12 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
   skin = morphOpen(skin, w, h, 9);
 
   // 2. nipple seed (areola-first; the old HSV dark-red-disk detector is gone —
-  //    it locked onto hair)
-  const nip = detectNipple(rgb, w, h, skin);
-  if (!nip) return null;
+  //    it locked onto hair). x == null means every candidate was vetoed as
+  //    non-anatomical — fail honestly, don't fit fingers.
+  const nip = detectNipple(rgb, w, h, skin, faces);
+  if (nip.x == null) return null;
   const nx = nip.x, ny = nip.y;
+  const seedVetoes = nip.vetoed || 0;
 
   // 3. areola radial-edge fit
   const ar = areolaRadial(rgb, w, h, nx, ny);
@@ -927,7 +982,11 @@ export function measureBreastTelemetry(rgb, w, h, sourceName) {
       band_table: bt,
       note: 'firm read per lexicon: mound fullness class ' + cup.verdict +
         ' (width/fold ratio ' + cup.fullness.toFixed(2) +
-        '); camera angle unmodeled — apparent volume shifts with viewpoint.',
+        '); camera angle unmodeled — apparent volume shifts with viewpoint.' +
+        (seedVetoes > 0
+          ? ' ' + seedVetoes + ' rival nipple candidate' + (seedVetoes === 1 ? '' : 's') +
+            ' rejected as non-anatomical (elongated dark core, or inside a detected face box).'
+          : ''),
     },
     confidence: {
       areola_diameter: areolaConf + ' (' + ar.rays_used + ' radial rays, IQR ' +
