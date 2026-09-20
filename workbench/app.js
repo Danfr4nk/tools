@@ -8,9 +8,9 @@
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
-import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920e';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920e';
-import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920e';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920f';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920f';
+import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920f';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
 (function () {
@@ -633,6 +633,15 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     dlp.onclick = () => {
       const t = window.__wbTelePng;
       if (!t) { $('exportstate').textContent = 'no annotated telemetry this run.'; return; }
+      // iOS Safari ignores the download attribute on data: URLs — a
+      // programmatic click navigates the whole page to the image instead of
+      // downloading it. Open a new tab there (long-press to save to Photos).
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      if (isIOS) {
+        window.open(t.dataUrl, '_blank');
+        $('exportstate').textContent = 'opened in a new tab — long-press the image to save it.';
+        return;
+      }
       const a = document.createElement('a');
       a.href = t.dataUrl;
       a.download = 'workbench-telemetry-face' + (t.faceIdx + 1) + '-annotated.png';

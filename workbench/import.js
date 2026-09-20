@@ -5,8 +5,8 @@
  * pure renderers, so this keeps working even when the photo pipeline fails to
  * boot — e.g. a CDN hiccup on the phone.
  */
-import { validateBreastTelemetry, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920e';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920e';
+import { validateBreastTelemetry, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920f';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920f';
 
 const $ = id => document.getElementById(id);
 const setStatus = html => { $('importState').innerHTML = html; };
