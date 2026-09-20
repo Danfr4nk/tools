@@ -736,7 +736,19 @@ export function cleavageX(rgb, w, h, ny, midX = null) {
   return x0 + bi;
 }
 
-// Skin-mask runs along one row (gap tolerance 3px, like the prototype).
+// Other breast: the widest skin run on the far side of the cleavage line
+// from the nipple, excluding the nipple's own run. Pure + exported for tests.
+export function otherBreastRun(runs, run, nx, cx) {
+  const cands = (runs || []).filter(r => r !== run && r[1] - r[0] >= 8);
+  let best = null;
+  if (nx > cx) {
+    // nipple right of cleavage -> the other mound is entirely left of it
+    for (const r of cands) if (r[1] < cx && (!best || r[1] > best[1])) best = r;
+  } else {
+    for (const r of cands) if (r[0] > cx && (!best || r[0] < best[0])) best = r;
+  }
+  return best;
+}
 function rowRuns(skin, w, y) {
   const runs = [];
   let cur = null;
@@ -970,15 +982,17 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null
   }
   const mm = px => mmPerPx == null ? null : r1(px * mmPerPx);
 
-  // left breast: skin run at nipple height containing x ~ 0.30W (truncated)
-  const lrun = runs.find(r => r[0] <= w * 0.30 && w * 0.30 <= r[1]);
+  // other breast: skin run on the far side of the cleavage line from the
+  // nipple (the old hardcoded 0.30W probe latched onto the measured
+  // breast's own run on wide close-ups)
+  const lrun = otherBreastRun(runs, run, nx, cx);
   const left_breast = lrun
     ? {
-        visible_from_x: 0,
-        visible_to_x: lrun[1],
-        visible_width_px: lrun[1],
+        visible_from_x: Math.round(lrun[0]),
+        visible_to_x: Math.round(lrun[1]),
+        visible_width_px: lrun[1] - lrun[0],
         truncated: true,
-        note: 'mound cut by frame edge; nipple sliver visible at left edge',
+        note: 'partial mound on the far side of the cleavage line from the measured nipple',
       }
     : { note: 'not resolved' };
 

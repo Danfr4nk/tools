@@ -8,9 +8,9 @@
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
-import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920d';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920d';
-import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920d';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920e';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920e';
+import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920e';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
 (function () {
