@@ -9,9 +9,9 @@
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
-import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920b';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship, renderBody } from './render.js?v=20260920b';
-import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920b';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920c';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship, renderBody } from './render.js?v=20260920c';
+import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920c';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
 (function () {
@@ -308,8 +308,12 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     $('runstate').textContent = 'running breast telemetry…';
     // faces feed the nipple-seed plausibility veto (seeds inside a face box
     // are rejected as non-anatomical); body-only mode passes [].
+    // Pose is fetched first now: the nipple-side arm polyline becomes a wall
+    // the mound flood cannot cross (stops the arm-leak scribbles), and the
+    // same landmarks feed the cross-check below.
+    const pose = await ensurePoseRaw();
     const rep = measureBreastTelemetry(photo.rgb, photo.w, photo.h, fileName,
-      faces.map(f => f.bbox));
+      faces.map(f => f.bbox), pose);
     if (!rep) throw new Error('breast telemetry: could not resolve nipple/areola/nail landmarks in this photo');
     const v = validateBreastTelemetry(rep);
     if (!v.ok) throw new Error('breast telemetry schema invalid: ' + v.errors.join('; '));
@@ -318,7 +322,6 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     // band, clear of the hands. Runs even when the body instrument is off;
     // it is part of breast validation now, not a separate card. A hard
     // failure refuses the read outright: no "firm" verdict on a hand-lock.
-    const pose = await ensurePoseRaw();
     if (pose) {
       $('runstate').textContent = 'cross-checking breast landmarks against body pose…';
       const chk = poseCrossCheck(rep, pose, photo.w, photo.h);

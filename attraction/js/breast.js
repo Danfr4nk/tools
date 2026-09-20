@@ -571,7 +571,7 @@ export function fitAreolaEllipse(polar, nx, ny) {
 // the nipple) and the cleavage wall (never cross the midline into the other
 // breast). Where the mound blends into evenly-lit chest the boundary follows
 // the light falloff — honest about the indeterminacy.
-export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wallX = null, wallSide = 0) {
+export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wallX = null, wallSide = 0, block = null) {
   const atG = (x, y) => {
     const j = (y * w + x) * 3;
     return grayOf(rgb[j], rgb[j + 1], rgb[j + 2]);
@@ -594,7 +594,7 @@ export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wa
   const stack = [];
   for (const [x, y] of ringXY) {
     const p = y * w + x;
-    if (skin[p] && !inBlob[p] && atG(x, y) >= lo) { inBlob[p] = 1; stack.push(p); }
+    if (skin[p] && !inBlob[p] && !(block && block[p]) && atG(x, y) >= lo) { inBlob[p] = 1; stack.push(p); }
   }
   const rMax2 = rMax * rMax;
   let count = 0;
@@ -604,7 +604,7 @@ export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wa
     for (const [nx2, ny2] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
       if (nx2 < 0 || nx2 >= w || ny2 < 0 || ny2 >= h) continue;
       const q = ny2 * w + nx2;
-      if (inBlob[q] || !skin[q]) continue;
+      if (inBlob[q] || !skin[q] || (block && block[q])) continue;
       const ddx = nx2 - nx, ddy = ny2 - ny;
       if (ddx * ddx + ddy * ddy > rMax2) continue;
       if (wallX !== null && wallSide < 0 && nx2 > wallX) continue; // never cross the cleavage
@@ -824,10 +824,13 @@ function cupVerdict(moundWpx, nippleToFoldPx) {
 
 /* ---------------- main measurement: breast_telemetry/v1 ---------------- */
 
-export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
+export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null) {
   // rgb: Float32Array/Uint8Array/Buffer of RGB bytes, length w*h*3.
   // faces: optional [[x1,y1,x2,y2],...] from the workbench's face detector —
   //   nipple seeds inside a face box are vetoed (see detectNipple).
+  // pose: optional raw MediaPipe pose landmarks (33 normalized {x,y,visibility});
+  //   the shoulder->elbow->wrist polyline of the nipple-side arm becomes a
+  //   wall the mound flood cannot cross (stops the arm-leak scribbles).
   // Returns the exact breast_telemetry/v1 schema object, or null when the
   // pipeline cannot resolve the required landmarks.
   if (!rgb || rgb.length < w * h * 3) return null;
@@ -874,8 +877,12 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
   // 5c. breast mound contour — luminance-region boundary around the nipple
   const rMaxC = Math.min(Math.max(w, h), Math.round(nippleToFoldPx * 1.15));
   const wallSide = nx < cx ? -1 : 1; // breast sits on the nipple's side of the cleavage
+  // Arm wall from the pose skeleton: the nipple-side arm is a lateral wall the
+  // mound flood cannot cross. Without it the flood walks onto the adjacent
+  // arm (similar luminance, within rMax) and the contour comes back scribbled.
+  const armBlock = armWallMask(pose, w, h, nx, ny, rMaxC);
   const contour = breastContour(rgb, w, h, skin, nx, ny, ar.radius_px, rMaxC,
-    12, cx - wallSide * 12, wallSide);
+    12, cx - wallSide * 12, wallSide, armBlock);
 
   // 5d. fold curve across the contour's horizontal extent
   // (fallback when the contour is sparse: nipple ± 1.5 areola diameters)
@@ -956,6 +963,7 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
       right_nipple_to_fold_px: Math.round(nippleToFoldPx),
       right_fold_y_px: yBot,
       cleavage_x_at_nipple_height_px: cx,
+      arm_wall_applied: armBlock != null,
       nail_anchor_median_width_px: nail ? r1(nail.median_width_px) : null,
       barbell_ball_diameter_px: barb ? barb.ball_diameter_px : null,
     },
@@ -1087,6 +1095,46 @@ export function validateBreastTelemetry(obj) {
 // anything (no pose, shoulders unseen) — not a pass, not a fail.
 const PLM = { l_shoulder: 11, r_shoulder: 12, l_elbow: 13, r_elbow: 14,
               l_wrist: 15, r_wrist: 16, l_hip: 23, r_hip: 24 };
+
+// Arm wall: the shoulder->elbow->wrist polyline of the arm nearest the nipple,
+// rasterized thick into a block mask for the mound flood. Without it the flood
+// leaks onto the adjacent arm (similar luminance, well within rMax) and the
+// angular contour ordering degrades into scribbles. Mirror-proof: the side is
+// picked by nearest shoulder in x, not by left/right labels. Returns null
+// (no wall, old behavior) when pose is absent, the arm landmarks are
+// unreliable, or the arm isn't adjacent to the nipple — never invent a wall.
+export function armWallMask(pose, w, h, nx, ny, rMax) {
+  if (!pose || pose.length < 33) return null;
+  const vis = i => pose[i] && (pose[i].visibility ?? 0) >= 0.5;
+  const PX = i => ({ x: pose[i].x * w, y: pose[i].y * h });
+  if (!vis(PLM.l_shoulder) || !vis(PLM.r_shoulder)) return null;
+  const sL = PX(PLM.l_shoulder), sR = PX(PLM.r_shoulder);
+  const side = Math.abs(sL.x - nx) <= Math.abs(sR.x - nx) ? 'l' : 'r';
+  const si = side === 'l' ? PLM.l_shoulder : PLM.r_shoulder;
+  const ei = side === 'l' ? PLM.l_elbow : PLM.r_elbow;
+  const wi = side === 'l' ? PLM.l_wrist : PLM.r_wrist;
+  if (!vis(si) || !vis(ei) || !vis(wi)) return null;
+  const S = PX(si), E = PX(ei), W = PX(wi);
+  for (const p of [S, E, W])
+    if (!isFinite(p.x) || !isFinite(p.y) || p.x < 0 || p.x >= w || p.y < 0 || p.y >= h) return null;
+  if (Math.hypot(S.x - nx, S.y - ny) > rMax * 1.6) return null; // arm not adjacent: nothing to leak onto
+  const R = Math.max(5, Math.round(w * 0.008));
+  const mask = new Uint8Array(w * h);
+  const stamp = (x, y) => {
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      if (dx * dx + dy * dy > R * R) continue;
+      const xx = Math.round(x + dx), yy = Math.round(y + dy);
+      if (xx >= 0 && xx < w && yy >= 0 && yy < h) mask[yy * w + xx] = 1;
+    }
+  };
+  for (const [A, B] of [[S, E], [E, W]]) {
+    const len = Math.hypot(B.x - A.x, B.y - A.y);
+    const steps = Math.max(1, Math.ceil(len / 2));
+    for (let s = 0; s <= steps; s++)
+      stamp(A.x + (B.x - A.x) * s / steps, A.y + (B.y - A.y) * s / steps);
+  }
+  return mask;
+}
 
 export function poseCrossCheck(rep, pose, w, h) {
   const out = { applicable: false, passed: true, failures: [], warnings: [],
