@@ -13,18 +13,33 @@
   .tool { border:1px solid #2a2e37; border-radius:12px; padding:16px 18px; margin:14px 0; background:#181b21; }
   .tool h2 { margin:0 0 6px; font-size:18px; }
   .tool p { margin:0; color:#9aa0ad; font-size:14px; }
+  .tool .subs { margin-top:8px; font-size:12.5px; color:#7a8191; }
+  .tool .subs a { color:#7a8191; text-decoration:underline dotted; text-underline-offset:2px; }
+  .tool .subs a:hover { color:#61afef; }
   h2.cat { font-size:13px; text-transform:uppercase; letter-spacing:2px; color:#61afef; margin:34px 0 4px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>tools</h1>
-  <p class="dim">Temporary index — the real splash page is coming.</p>
+  <p class="dim">Every instrument, one page. Older versions live as sub-links under the current one.</p>
   <div class="tool">
     <h2><a href="workbench/">workbench</a></h2>
     <p>One photo in, every instrument out — shared face detection fans out to
-       age estimation, kinship comparison, and facial telemetry in a single
-       pass, with one unified report. Nothing is uploaded.</p>
+       age estimation and facial telemetry in a single pass, with one unified
+       report. Nothing is uploaded.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="kinship/">kinship</a></h2>
+    <p>Sibling check — compares the most prominent face in each of two photos
+       and estimates whether the two people could be genetically related:
+       similarity score, confidence, plain-language verdict. Runs in the
+       browser, nothing is uploaded.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="age/">age</a></h2>
+    <p>Visual age estimation — Vision Transformer age-bracket classifier,
+       runs 100% in the browser. Nothing is uploaded.</p>
   </div>
   <div class="tool">
     <h2><a href="body/">body</a></h2>
@@ -33,15 +48,68 @@
        Nothing is uploaded.</p>
   </div>
   <div class="tool">
-    <h2><a href="attraction/">attraction</a></h2>
-    <p>Facial-preference diagnostic, scenario telemetry &amp; ratings, face book,
-       frame-describe lexicon, body metrics, telemetry lab.</p>
+    <h2><a href="modbod/">modbod</a></h2>
+    <p>Anonymized parametric wireframe body study — sculpt bust, waist, hips,
+       glute, thigh, height on a statistical mesh with per-vertex
+       source-material coverage. Single page, no uploads.</p>
   </div>
   <div class="tool">
-    <h2><a href="age/">age</a></h2>
-    <p>Visual age estimation — Vision Transformer age-bracket classifier,
-       runs 100% in the browser. Nothing is uploaded.</p>
+    <h2><a href="co-watch/">co-watch</a></h2>
+    <p>Watch something <em>with</em> Sammy — send a YouTube link in chat, he
+       reads the timed transcript and talks it through with you in real time.</p>
   </div>
+
+  <h2 class="cat">attraction</h2>
+  <div class="tool">
+    <h2><a href="attraction/game.html">preference diagnostic</a></h2>
+    <p>Iterative A/B mapping of what you find attractive in a face — Phase 1
+       sweeps structural archetypes, Phase 2 isolates one variable at a time,
+       every pick scored on measured metric deltas against the 155-face bank.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="attraction/telemetry.html">telemetry lab</a></h2>
+    <p>Standalone precision facial measurement — ~40-metric vector: gonial
+       angles, facial thirds, fWHR, canthal tilt, regional asymmetry, head
+       pose. Telestrator overlays, 95% intervals, JSON/CSV export.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="attraction/body-metrics.html">body metrics</a></h2>
+    <p>Precision full-body measurement in-browser — 16 scale-invariant body
+       ratios from pose landmarks, skeleton overlays, per-person models,
+       z-scored matching with per-ratio breakdowns.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="attraction/frame-describe.html">frame describe</a></h2>
+    <p>Open-ended body/frame analysis in your own lexicon — upload a photo,
+       get an exhaustive qualitative read. Bring your own vision API key.</p>
+  </div>
+  <div class="tool">
+    <h2><a href="attraction/scenario-rate.html">scenario ratings</a></h2>
+    <p>234 rated situations: 78 bases × 2 single-knob modifiers. Each modifier
+       changes exactly one thing, so the readout is causal. ∅ vetoes a
+       question out of scoring; ✎ adds a private note per line.</p>
+    <div class="subs">older: <a href="attraction/scenario-rate-v2.html">v2</a> ·
+      <a href="attraction/scenario-rate-v1.html">v1</a> ·
+      <a href="attraction/scenario-rate-alt.html">alt — LOVE/LIKE/MEH/NO WAY</a></div>
+  </div>
+  <div class="tool">
+    <h2><a href="attraction/scenario.html">scenario telemetry</a></h2>
+    <p>Named-preset scenario bouts, then metric isolation — run the bout, then
+       every trial shows only what's different between A and B. Veto both,
+       reluctant, or pick a side.</p>
+    <div class="subs">older: <a href="attraction/scenario-v5.html">v5</a> ·
+      <a href="attraction/scenario-v4.html">v4</a> ·
+      <a href="attraction/scenario-v3.html">v3</a> ·
+      <a href="attraction/scenario-v2.html">v2</a> ·
+      <a href="attraction/scenario-v1.html">v1</a></div>
+  </div>
+  <div class="tool">
+    <h2><a href="attraction/face-book.html">face book</a></h2>
+    <p>The browsable catalog of the whole face library — every synthetic face
+       in the bank, filterable by phase, axis, and group, with lightbox
+       inspection.</p>
+  </div>
+
   <h2 class="cat"><a href="music/" style="color:#61afef; text-decoration:none;">music</a></h2>
   <div class="tool">
     <h2><a href="music/musictrainer/">MusicTrainer</a></h2>
