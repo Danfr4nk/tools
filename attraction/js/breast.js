@@ -454,7 +454,7 @@ export function detectNipple(rgb, w, h, skin, faces) {
 }
 
 // Areola: radial-edge scan on the CIELAB a-channel from the nipple center.
-function areolaRadial(rgb, w, h, nx, ny) {
+export function areolaRadial(rgb, w, h, nx, ny) {
   const hits = []; // {deg, r} per successful ray — feeds the ellipse fit too
   const at = (x, y) => {
     const j = (y * w + x) * 3;
@@ -492,16 +492,19 @@ function areolaRadial(rgb, w, h, nx, ny) {
       for (let k = -2; k <= 2; k++) { const ii = i + k; if (ii >= 0 && ii < grad.length) { s += grad[ii]; n++; } }
       return s / n;
     });
-    // Strongest qualified dip on this ray. The old code's (30,130) window is
-    // gone — on full-body photos the true edge sits inside 30px and the old
-    // floor forced every ray to latch onto mound shadows instead (the giant
-    // circles). The nipple V-guard + sustained-drop tests below are what now
-    // keeps the nipple edge and texture wiggles out.
-    let best = -1, bestG = 0;
+    // Innermost qualified dip on this ray wins. The areola boundary is the
+    // FIRST sustained redness drop outside the nipple — the old strongest-dip
+    // choice latched onto the mound edge on close-ups (giant ellipses, bogus
+    // ~60 deg tilts). The old code's (30,130) window is gone — on full-body
+    // photos the true edge sits inside 30px and the old floor forced every
+    // ray to latch onto mound shadows instead (the giant circles). The nipple
+    // V-guard + sustained-drop tests below are what now keeps the nipple
+    // edge and texture wiggles out.
+    let best = -1;
     for (let i = 0; i < sm.length; i++) {
       const r = rs[i + 1];
       if (r < 12 || r > 130) continue;
-      if (sm[i] >= -0.35 || sm[i] >= bestG) continue;
+      if (sm[i] >= -0.35) continue;
       // sustained? mean a-channel of the 8 samples after the dip must sit
       // well below the 8 before it — kills intra-areola texture wiggles.
       // Plus the pre-dip tissue must be brighter than the nipple core, so a
@@ -511,7 +514,7 @@ function areolaRadial(rgb, w, h, nx, ny) {
         if (i - k >= 0) { pre += prof[i - k]; pn++; preV += atV(Math.round(nx + dx * rs[i - k]), Math.round(ny + dy * rs[i - k])); vn++; }
         if (i + 1 + k < prof.length) { post += prof[i + 1 + k]; qn++; }
       }
-      if (pn > 0 && qn > 0 && (post / qn) < (pre / pn) - 1.0 && (preV / vn) > nipV + 12) { best = r; bestG = sm[i]; }
+      if (pn > 0 && qn > 0 && (post / qn) < (pre / pn) - 1.0 && (preV / vn) > nipV + 12) { best = r; break; }
     }
     if (best >= 0) hits.push({ deg, r: best });
   }
@@ -534,7 +537,7 @@ function areolaRadial(rgb, w, h, nx, ny) {
 // axis ratio gives the areola's surface tilt (0 = facing the camera) — real
 // 3D orientation from a single photo, no extra sampling needed. The major
 // axis direction is the tilt axis in the image plane.
-function fitAreolaEllipse(polar, nx, ny) {
+export function fitAreolaEllipse(polar, nx, ny) {
   const n = polar.length;
   if (n < 8) return null;
   let r0 = 0, c2 = 0, s2 = 0, cx = 0, cy = 0;
