@@ -4,14 +4,13 @@
  * The detected faces fan out to:
  *   - age estimation  (ViT bracket classifier via transformers.js)
  *   - facial telemetry (MediaPipe FaceLandmarker, same 17-ratio vector as the lab)
- *   - kinship        (ArcFace embeddings, A vs B)
  * Everything runs on-device. Nothing is uploaded.
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
-import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920c';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship, renderBody } from './render.js?v=20260920c';
-import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920c';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920d';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920d';
+import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920d';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
 (function () {
@@ -37,14 +36,14 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
   /* ---------------- state ---------------- */
 
-  let kSessions = null, kNames = null, kinshipReady = false;
+  let kSessions = null, kNames = null, detectReady = false;
   let ageClassifier = null, ageReady = false;
   let teleReady = false;
 
   let photo = null;          // {rgb, w, h, img}
   let photoName = 'upload';
   let faces = [];            // SCRFD faces, largest-first
-  let faceA = 0, faceB = 1;
+  let faceA = 0;
   let embedCache = {};       // faceIndex -> embedFace result
   let lastReport = null;
   let hasRun = false;
@@ -110,8 +109,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
   // Stage 1 (upload): det + gender/age only — both local, ~18MB, fast.
   // The 174MB HuggingFace recognition model loads lazily via ensureRec(),
-  // only when an instrument actually needs a face embedding (age 2nd
-  // opinion, kinship). Eagerly fetching it blocked every upload on it.
+  // only when the age instrument's 2nd-opinion embedding is actually
+  // requested. Eagerly fetching it blocked every upload on it.
   async function loadDetect(onp) {
     const total = KIN_SIZES.det + KIN_SIZES.ga;
     let done = 0;
@@ -130,12 +129,13 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       detIn: det.inputNames[0], detOut: det.outputNames,
       gaIn: ga.inputNames[0], gaOut: ga.outputNames[0],
     };
-    kinshipReady = true;
+    detectReady = true;
   }
 
   // Stage 2 (lazy): the remote recognition model. Single shared promise so
   // concurrent embedding requests don't double-download; resets on failure
-  // so a stall error is retryable.
+  // so a stall error is retryable. Only fetched when the age instrument's
+  // 2nd-opinion embedding is actually requested.
   let recPromise = null;
   function ensureRec(onp) {
     if (kSessions.rec) return Promise.resolve();
@@ -386,26 +386,6 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     return embedCache[idx];
   }
 
-  async function instrumentKinship() {
-    if (faces.length < 2) return { skipped: 'needs two faces in the photo' };
-    if (faceA === faceB) return { skipped: 'A and B are the same face' };
-    const ea = await embeddingFor(faceA);
-    const eb = await embeddingFor(faceB);
-    const a = { embedding: ea.embedding, sex: ea.sex, age: ea.age, faces, faceIndex: faceA };
-    const b = { embedding: eb.embedding, sex: eb.sex, age: eb.age, faces, faceIndex: faceB };
-    const cmp = P.compareResults(a, b);
-    return {
-      face_a: faceA, face_b: faceB,
-      cosine_similarity: cmp.cosine_similarity,
-      kinship_confidence: cmp.kinship_confidence,
-      verdict: cmp.verdict,
-      verdict_note: cmp.verdict_note,
-      caveats: cmp.caveats,
-      predicted: { a: { sex: ea.sex, age: ea.age }, b: { sex: eb.sex, age: eb.age } },
-      calibration: cmp.calibration,
-    };
-  }
-
   /* ---------------- rendering ---------------- */
 
   function drawPreview() {
@@ -427,11 +407,11 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     ctx.lineWidth = 2;
     faces.forEach((f, i) => {
       const [x1, y1, x2, y2] = f.bbox;
-      ctx.strokeStyle = i === faceA ? '#7dd3fc' : (i === faceB ? '#a78bfa' : 'rgba(125,211,252,.35)');
+      ctx.strokeStyle = i === faceA ? '#7dd3fc' : 'rgba(125,211,252,.35)';
       ctx.strokeRect(x1 * scale, y1 * scale, (x2 - x1) * scale, (y2 - y1) * scale);
-      ctx.fillStyle = i === faceA ? '#7dd3fc' : (i === faceB ? '#a78bfa' : 'rgba(125,211,252,.6)');
+      ctx.fillStyle = i === faceA ? '#7dd3fc' : 'rgba(125,211,252,.6)';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(i === faceA ? 'A' : (i === faceB ? 'B' : String(i + 1)),
+      ctx.fillText(i === faceA ? 'A' : String(i + 1),
         x1 * scale + 4, y1 * scale + 16);
     });
     // pose stick figure, when a run produced one
@@ -463,35 +443,14 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     faces.forEach((f, i) => {
       const b = document.createElement('button');
       b.className = 'chip' + (i === faceA ? ' on' : '');
-      b.textContent = 'face ' + (i + 1) + ' (' + f.score.toFixed(2) + ')' + (i === faceB ? ' · B' : '');
+      b.textContent = 'face ' + (i + 1) + ' (' + f.score.toFixed(2) + ')';
       b.onclick = () => {
         faceA = i;
-        if (faceB === faceA) faceB = (faceA + 1) % faces.length;
-        syncBSelect(); renderChips(); drawPreview();
+        renderChips(); drawPreview();
         if (hasRun) run();
       };
       box.appendChild(b);
     });
-    const kp = $('kinshipPick');
-    if (faces.length >= 2) {
-      kp.classList.remove('hidden');
-      syncBSelect();
-    } else kp.classList.add('hidden');
-  }
-
-  function syncBSelect() {
-    const sel = $('faceB');
-    sel.innerHTML = '';
-    faces.forEach((f, i) => {
-      if (i === faceA) return;
-      const o = document.createElement('option');
-      o.value = i; o.textContent = 'face ' + (i + 1) + ' (' + f.score.toFixed(2) + ')';
-      if (i === faceB) o.selected = true;
-      sel.appendChild(o);
-    });
-    if (![...sel.options].some(o => +o.value === faceB))
-      faceB = sel.options.length ? +sel.options[0].value : 0;
-    sel.value = faceB;
   }
 
   /* ---------------- main flow ---------------- */
@@ -521,9 +480,9 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     try {
       photo = await readPhoto(file);
       photoName = (file && file.name) || 'upload';
-      faces = []; embedCache = {}; faceA = 0; faceB = 1;
+      faces = []; embedCache = {}; faceA = 0;
       poseRaw = null; poseTried = false; // fresh pose per photo
-      if (!kinshipReady) {
+      if (!detectReady) {
         setBar(0, 'loading detection models…');
         await loadDetect(pct => setBar(pct, 'loading detection models… ' + (pct * 100).toFixed(0) + '%'));
         setBar(1, 'detection models ready — everything runs on your device');
@@ -535,7 +494,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
         $('runstate').textContent = 'no face detected in this photo';
         return;
       }
-      faceA = 0; faceB = faces.length > 1 ? 1 : 0;
+      faceA = 0;
       $('facecard').classList.remove('hidden');
       $('runcard').classList.remove('hidden');
       renderChips(); drawPreview();
@@ -547,11 +506,10 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   }
 
   async function run() {
-    if (!photo || !kinshipReady) return;
+    if (!photo || !detectReady) return;
     $('run').disabled = true;
     const wantAge = $('tAge').checked && faces.length > 0;
     const wantTele = $('tTele').checked && faces.length > 0;
-    const wantKin = $('tKin').checked && faces.length > 1;
     const wantBody = $('tBody').checked;
     const wantBust = $('tBust').checked;
     const rep = {
@@ -563,9 +521,9 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     };
     let html = '';
     try {
-      // embeddings first: feeds the face card's 2nd-opinion age and kinship
+      // embeddings first: feeds the face card's 2nd-opinion age
       let emb = null;
-      if (wantAge || wantKin) {
+      if (wantAge) {
         $('runstate').textContent = 'extracting face embedding…';
         emb = await embeddingFor(faceA);
         rep.face_a_attributes = { sex: emb.sex, genderage_age: emb.age, detection_score: +faces[faceA].score.toFixed(4) };
@@ -587,13 +545,6 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
           html += card('facial telemetry', '<p class="note err">telemetry failed: ' + esc(e.message || e) + '</p>');
           rep.instruments.telemetry = { error: String(e.message || e) };
         }
-        $('report').innerHTML = html;
-      }
-      if (wantKin) {
-        $('runstate').textContent = 'running kinship comparison…';
-        const r = await instrumentKinship();
-        rep.instruments.kinship = r;
-        html += renderKinship(r);
         $('report').innerHTML = html;
       }
       if (wantBody) {
@@ -662,11 +613,6 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     if (item) handleFile(item.getAsFile());
   });
   $('run').onclick = run;
-  $('faceB').onchange = e => {
-    faceB = +e.target.value;
-    renderChips(); drawPreview();
-    if (hasRun) run();
-  };
   // (the import card is wired by import.js, a standalone module)
   $('copyjson').onclick = async () => {
     const rep = window.__wbLastReport || lastReport;
