@@ -1071,6 +1071,90 @@ export function validateBreastTelemetry(obj) {
   return { ok: errors.length === 0, errors };
 }
 
+/* ---------------- body-pose cross-check ---------------- */
+
+// Validates the measured breast landmarks against a MediaPipe pose skeleton
+// (33 normalized landmarks, {x, y, visibility}). Pure function — the
+// workbench runs it after measureBreastTelemetry and refuses the read on a
+// hard failure, so an anatomically impossible seed (a hand, the background)
+// can never ship with a "firm" cup verdict.
+//
+// Degrades gracefully per-check: each check only runs when the landmarks it
+// needs are visible (>= 0.5). applicable=false means the pose couldn't say
+// anything (no pose, shoulders unseen) — not a pass, not a fail.
+const PLM = { l_shoulder: 11, r_shoulder: 12, l_elbow: 13, r_elbow: 14,
+              l_wrist: 15, r_wrist: 16, l_hip: 23, r_hip: 24 };
+
+export function poseCrossCheck(rep, pose, w, h) {
+  const out = { applicable: false, passed: true, failures: [], warnings: [],
+                reason: null, torso: null };
+  if (!pose || pose.length < 33) { out.reason = 'no pose landmarks'; return out; }
+  const mp = rep && rep.measured_px;
+  if (!mp || !mp.right_nipple || !isFinite(mp.right_nipple.x) || !isFinite(mp.right_nipple.y)) {
+    out.reason = 'no breast report to check'; return out;
+  }
+  const vis = i => pose[i] && (pose[i].visibility ?? 0) >= 0.5;
+  const PX = i => ({ x: pose[i].x * w, y: pose[i].y * h });
+  if (!vis(PLM.l_shoulder) || !vis(PLM.r_shoulder)) {
+    out.reason = 'shoulders not reliably detected'; return out;
+  }
+  out.applicable = true;
+  const sL = PX(PLM.l_shoulder), sR = PX(PLM.r_shoulder);
+  const shY = (sL.y + sR.y) / 2;
+  const shW = Math.hypot(sL.x - sR.x, sL.y - sR.y);
+  const shX0 = Math.min(sL.x, sR.x), shX1 = Math.max(sL.x, sR.x);
+  const nx = mp.right_nipple.x, ny = mp.right_nipple.y;
+  const aboveLine = shY - 0.25 * shW;   // generous: breast tissue never clears the shoulders
+
+  // 1. shoulder line (hard): the nipple sits below the shoulder girdle, always.
+  if (ny < aboveLine)
+    out.failures.push('nipple seed is above the shoulder line — anatomically impossible');
+
+  // 2. hand/arm proximity (hard): the classic misfire is a seed locked onto a
+  //    curled hand — finger creases pass the dark-core gates. A true nipple is
+  //    never within a third of a shoulder-width of a wrist or elbow.
+  const limbs = [PLM.l_wrist, PLM.r_wrist, PLM.l_elbow, PLM.r_elbow]
+    .filter(vis).map(PX);
+  for (const p of limbs) {
+    if (Math.hypot(nx - p.x, ny - p.y) < 0.30 * shW) {
+      out.failures.push('nipple seed within 0.30 shoulder-widths of a hand/arm landmark — likely locked onto a hand, not a breast');
+      break;
+    }
+  }
+
+  // 3. torso band (hard, needs hips): the seed must sit between the shoulder
+  //    line and the hip line, inside the torso's lateral span.
+  let hipY = null, torsoLen = null;
+  if (vis(PLM.l_hip) && vis(PLM.r_hip)) {
+    const hL = PX(PLM.l_hip), hR = PX(PLM.r_hip);
+    hipY = (hL.y + hR.y) / 2;
+    torsoLen = hipY - shY;
+    if (torsoLen > 1) {
+      if (ny > hipY + 0.30 * torsoLen)
+        out.failures.push('nipple seed below the torso band (past the hip line)');
+      if (nx < shX0 - 0.6 * shW || nx > shX1 + 0.6 * shW)
+        out.failures.push('nipple seed outside the torso width');
+    }
+  }
+  out.torso = { shoulder_y_px: r1(shY), shoulder_width_px: r1(shW),
+                hip_y_px: hipY == null ? null : r1(hipY),
+                torso_len_px: torsoLen == null ? null : r1(torsoLen) };
+
+  // 4. contour leak (soft): the mound boundary lives on the torso. If a big
+  //    share of it sits above the shoulder line, the flood leaked onto the
+  //    background (the window-blind failure class).
+  const contour = mp.right_breast_contour_px || [];
+  if (contour.length >= 8) {
+    const above = contour.filter(p => p[1] < aboveLine).length;
+    if (above / contour.length > 0.30)
+      out.warnings.push(Math.round(above / contour.length * 100) +
+        '% of the breast contour sits above the shoulder line — possible background leak');
+  }
+
+  out.passed = out.failures.length === 0;
+  return out;
+}
+
 /* ---------------- browser overlay (workbench preview) ---------------- */
 
 export function drawBreastOverlay(canvas, img, rep) {

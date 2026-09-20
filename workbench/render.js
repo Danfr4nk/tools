@@ -74,6 +74,34 @@ export function renderKinship(r) {
   return card('kinship — face ' + (r.face_a + 1) + ' vs face ' + (r.face_b + 1), h);
 }
 
+// ratioKeys + ratioLabelFn come from the caller (attraction/js/body.js) so this
+// module never pulls the MediaPipe stack — the standalone JSON importer
+// keeps working even when the photo pipeline fails to boot.
+export function renderBody(r, ratioKeys, ratioLabelFn) {
+  if (!r || r.error)
+    return card('body telemetry', '<p class="note err">body telemetry failed: ' +
+      esc((r && r.error) || 'unknown error') + '</p>');
+  let h = '';
+  if (r.pose_png_dataurl)
+    h += '<div style="margin-bottom:10px"><img class="preview" src="' + r.pose_png_dataurl +
+      '" alt="pose stick figure"></div>';
+  if (r.skip_reason)
+    h += '<div class="cav">' + esc(r.skip_reason) + ' — full-body ratios need ' +
+      'shoulders-through-ankles in frame; the stick figure is drawn from the ' +
+      'landmarks that were visible.</div>';
+  if (r.ratios) {
+    h += '<table class="metrics">';
+    for (const k of (ratioKeys || Object.keys(r.ratios)))
+      h += '<tr><td>' + esc(ratioLabelFn ? ratioLabelFn(k) : k) +
+        ' <span class="note">' + esc(k) + '</span></td><td>' +
+        (typeof r.ratios[k] === 'number' ? r.ratios[k].toFixed(3) : esc(r.ratios[k])) + '</td></tr>';
+    h += '</table>';
+  }
+  for (const w of (r.warnings || [])) h += '<div class="cav">' + esc(w) + '</div>';
+  h += '<p class="note">' + esc(r.method || '') + '. ' + esc(r.model || '') + '.</p>';
+  return card('body telemetry', h);
+}
+
 // photoImg: an HTMLImageElement for the landmark overlay, or null (pure import).
 export function renderBreast(rep, photoImg) {
   const mp = rep.measured_px, sm = rep.scale_model, ph = rep.modeled_physical, ce = rep.cup_estimate;
@@ -83,6 +111,19 @@ export function renderBreast(rep, photoImg) {
     '<div><div class="v">' + ph.right_areola_diameter_mm + ' mm</div><div class="l">areola diameter</div></div>' +
     '<div><div class="v">' + ph.right_mound_width_mm + ' mm</div><div class="l">mound width</div></div>' +
     '<div><div class="v">' + sm.mm_per_px + '</div><div class="l">mm/px (nail anchor)</div></div></div>';
+  const chk = rep.body_cross_check;
+  if (chk && chk.applicable) {
+    const ok = chk.passed;
+    h += '<div class="cav" style="border-color:' + (ok ? '#22c55e' : '#f87171') + '">' +
+      '<b>body cross-check: ' + (ok ? 'PASS' : 'FAIL') + '</b> — nipple seed vs pose ' +
+      'skeleton (shoulders y=' + chk.torso.shoulder_y_px + 'px' +
+      (chk.torso.hip_y_px != null ? ', hips y=' + chk.torso.hip_y_px + 'px' : ', hips out of frame') + ').';
+    for (const w of (chk.warnings || [])) h += '<br>⚠ ' + esc(w);
+    for (const f of (chk.failures || [])) h += '<br>✗ ' + esc(f);
+    h += '</div>';
+  } else if (chk && chk.reason) {
+    h += '<p class="note">body cross-check skipped: ' + esc(chk.reason) + '.</p>';
+  }
   h += '<table class="metrics">' +
     row('nipple (px)', mp.right_nipple.x + ', ' + mp.right_nipple.y) +
     row('areola diameter', mp.right_areola_diameter_px + ' px') +

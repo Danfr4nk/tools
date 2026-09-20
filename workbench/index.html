@@ -138,6 +138,7 @@
       <label class="tgl"><input type="checkbox" id="tAge" checked> age estimation <span class="note">(ViT bracket classifier + genderage second opinion)</span></label><br>
       <label class="tgl"><input type="checkbox" id="tTele" checked> facial telemetry <span class="note">(17-ratio MediaPipe vector)</span></label><br>
       <label class="tgl"><input type="checkbox" id="tKin" checked> kinship <span class="note">(A vs B embeddings — needs two faces)</span></label><br>
+      <label class="tgl"><input type="checkbox" id="tBody" checked> body telemetry <span class="note">(pose stick figure + 16 body ratios — runs without a face)</span></label><br>
       <label class="tgl"><input type="checkbox" id="tBust" checked> breast telemetry <span class="note">(breast_telemetry/v1 — torso photos, adult subjects; runs without a face)</span></label>
     </div>
     <div style="margin-top:10px">
@@ -163,7 +164,7 @@
   calibration — a resemblance meter, not a test. First run downloads models (~250&nbsp;MB total);
   everything is cached by your browser afterwards.</p>
 </div>
-<script type="module" src="import.js?v=20260916c"></script>
-<script type="module" src="app.js?v=20260916c"></script>
+<script type="module" src="import.js?v=20260920a"></script>
+<script type="module" src="app.js?v=20260920a"></script>
 </body>
 </html>

@@ -9,8 +9,9 @@
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
-import { measureBreastTelemetry, validateBreastTelemetry } from '../attraction/js/breast.js';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship } from './render.js';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920a';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship, renderBody } from './render.js?v=20260920a';
+import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920a';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
 (function () {
@@ -47,6 +48,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   let embedCache = {};       // faceIndex -> embedFace result
   let lastReport = null;
   let hasRun = false;
+  let poseRaw = null, poseTried = false; // per-photo MediaPipe pose landmarks (33, normalized)
 
   /* ---------------- model loading ---------------- */
 
@@ -311,7 +313,62 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     if (!rep) throw new Error('breast telemetry: could not resolve nipple/areola/nail landmarks in this photo');
     const v = validateBreastTelemetry(rep);
     if (!v.ok) throw new Error('breast telemetry schema invalid: ' + v.errors.join('; '));
+    // Body-pose cross-check: the nipple seed must be anatomically plausible
+    // relative to the pose skeleton — below the shoulders, inside the torso
+    // band, clear of the hands. Runs even when the body instrument is off;
+    // it is part of breast validation now, not a separate card. A hard
+    // failure refuses the read outright: no "firm" verdict on a hand-lock.
+    const pose = await ensurePoseRaw();
+    if (pose) {
+      $('runstate').textContent = 'cross-checking breast landmarks against body pose…';
+      const chk = poseCrossCheck(rep, pose, photo.w, photo.h);
+      rep.body_cross_check = chk;
+      if (chk.applicable && !chk.passed)
+        throw new Error('breast telemetry refused by body cross-check: ' + chk.failures.join('; '));
+    }
     return rep;
+  }
+
+  // Raw 33-landmark pose for the cross-check, cached per photo. No visibility
+  // gating here — poseCrossCheck degrades per-check on its own.
+  async function ensurePoseRaw() {
+    if (poseTried) return poseRaw;
+    poseTried = true;
+    try {
+      const lm = await ensurePose(m => { $('runstate').textContent = m; });
+      if (!lm) return null;
+      const res = lm.detect(photo.img);
+      const poses = res.landmarks || res.poseLandmarks || [];
+      poseRaw = (poses.length && poses[0].length) ? poses[0] : null;
+    } catch (e) { poseRaw = null; }
+    return poseRaw;
+  }
+
+  async function instrumentBody() {
+    $('runstate').textContent = 'estimating body pose…';
+    const raw = await ensurePoseRaw();
+    if (!raw) return { error: 'no pose detected in this photo' };
+    // Strict full-body ratios (the body-metrics lab path: needs
+    // shoulders-through-ankles); the stick figure draws from raw regardless.
+    let strict = null;
+    try { strict = await measureBodyImage(photo.img); }
+    catch (e) { strict = { ok: false, skip_reason: String((e && e.message) || e) }; }
+    const full = document.createElement('canvas');
+    drawSkeleton(full, photo.img, raw);
+    const MAXS = 900, sc = Math.min(1, MAXS / Math.max(full.width, full.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(full.width * sc));
+    cv.height = Math.max(1, Math.round(full.height * sc));
+    cv.getContext('2d').drawImage(full, 0, 0, cv.width, cv.height);
+    return {
+      pose_png_dataurl: cv.toDataURL('image/png'),
+      ratios: strict.ok ? strict.ratios : null,
+      visibility: strict.visibility || null,
+      warnings: strict.warnings || [],
+      skip_reason: strict.ok ? null : (strict.skip_reason || 'pose incomplete'),
+      model: 'MediaPipe PoseLandmarker (pose_landmarker_lite, float16)',
+      method: '33 landmarks → 9 segment lengths + 7 scale-invariant ratios, same definitions as the body-metrics lab',
+    };
   }
 
   async function embeddingFor(idx) {
@@ -374,6 +431,27 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       ctx.fillText(i === faceA ? 'A' : (i === faceB ? 'B' : String(i + 1)),
         x1 * scale + 4, y1 * scale + 16);
     });
+    // pose stick figure, when a run produced one
+    if (poseRaw) {
+      ctx.strokeStyle = 'rgba(74,222,128,.85)';
+      ctx.fillStyle = 'rgba(74,222,128,.9)';
+      ctx.lineWidth = 2; ctx.lineCap = 'round';
+      for (const [a, b] of SKELETON) {
+        const A = poseRaw[a], B = poseRaw[b];
+        if (!A || !B) continue;
+        ctx.beginPath();
+        ctx.moveTo(A.x * cv.width, A.y * cv.height);
+        ctx.lineTo(B.x * cv.width, B.y * cv.height);
+        ctx.stroke();
+      }
+      for (const i of [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]) {
+        const p = poseRaw[i];
+        if (!p) continue;
+        ctx.beginPath();
+        ctx.arc(p.x * cv.width, p.y * cv.height, 3, 0, 7);
+        ctx.fill();
+      }
+    }
   }
 
   function renderChips() {
@@ -441,6 +519,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       photo = await readPhoto(file);
       photoName = (file && file.name) || 'upload';
       faces = []; embedCache = {}; faceA = 0; faceB = 1;
+      poseRaw = null; poseTried = false; // fresh pose per photo
       if (!kinshipReady) {
         setBar(0, 'loading detection models…');
         await loadDetect(pct => setBar(pct, 'loading detection models… ' + (pct * 100).toFixed(0) + '%'));
@@ -448,8 +527,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       }
       $('runstate').textContent = 'detecting faces…';
       faces = await P.detectFaces(kSessions, kNames, photo.rgb, photo.w, photo.h);
-      const bustOnly = !faces.length && $('tBust').checked;
-      if (!faces.length && !bustOnly) {
+      const noFaceMode = !faces.length && ($('tBust').checked || $('tBody').checked);
+      if (!faces.length && !noFaceMode) {
         $('runstate').textContent = 'no face detected in this photo';
         return;
       }
@@ -458,7 +537,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       $('runcard').classList.remove('hidden');
       renderChips(); drawPreview();
       $('runstate').textContent = faces.length + ' face' + (faces.length > 1 ? 's' : '') +
-        ' detected' + (bustOnly ? ' — body-only mode (breast telemetry)' : ' — pick instruments and run.');
+        ' detected' + (noFaceMode ? ' — body-only mode (breast / body telemetry need no face)' : ' — pick instruments and run.');
     } catch (e) {
       $('runstate').innerHTML = '<span class="err">' + esc(e.message || e) + '</span>';
     }
@@ -470,6 +549,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     const wantAge = $('tAge').checked && faces.length > 0;
     const wantTele = $('tTele').checked && faces.length > 0;
     const wantKin = $('tKin').checked && faces.length > 1;
+    const wantBody = $('tBody').checked;
     const wantBust = $('tBust').checked;
     const rep = {
       generated_at: new Date().toISOString(),
@@ -513,6 +593,18 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
         html += renderKinship(r);
         $('report').innerHTML = html;
       }
+      if (wantBody) {
+        $('runstate').textContent = 'running body telemetry…';
+        try {
+          const r = await instrumentBody();
+          rep.instruments.body_telemetry = r;
+          html += renderBody(r, RATIO_KEYS, ratioLabel);
+        } catch (e) {
+          html += card('body telemetry', '<p class="note err">body telemetry failed: ' + esc(e.message || e) + '</p>');
+          rep.instruments.body_telemetry = { error: String(e.message || e) };
+        }
+        $('report').innerHTML = html;
+      }
       if (wantBust) {
         try {
           const r = await instrumentBreast(photoName);
@@ -527,6 +619,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       lastReport = rep;
       window.__wbLastReport = rep; // shared with import.js (export after import)
       hasRun = true;
+      if (poseRaw) drawPreview(); // overlay the stick figure on the preview
       $('exportcard').classList.remove('hidden');
       const dlp = $('dltelepng');
       if (dlp) dlp.style.display = window.__wbTelePng ? '' : 'none';

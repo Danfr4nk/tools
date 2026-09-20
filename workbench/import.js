@@ -5,8 +5,8 @@
  * pure renderers, so this keeps working even when the photo pipeline fails to
  * boot — e.g. a CDN hiccup on the phone.
  */
-import { validateBreastTelemetry, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship } from './render.js';
+import { validateBreastTelemetry, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920a';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship, renderBody } from './render.js?v=20260920a';
 
 const $ = id => document.getElementById(id);
 const setStatus = html => { $('importState').innerHTML = html; };
@@ -48,6 +48,12 @@ function renderImportedReport(obj) {
   if (ins.breast_telemetry) {
     html += ins.breast_telemetry.error ? errCard('breast telemetry', ins.breast_telemetry.error)
       : safe('breast telemetry', () => renderBreast(ins.breast_telemetry, null));
+  }
+  if (ins.body_telemetry) {
+    // no ratio labels on the import path (render.js stays MediaPipe-free);
+    // renderBody falls back to raw key names in stored order.
+    html += ins.body_telemetry.error ? errCard('body telemetry', ins.body_telemetry.error)
+      : safe('body telemetry', () => renderBody(ins.body_telemetry));
   }
   $('report').innerHTML = html;
   const ec = $('exportcard');
