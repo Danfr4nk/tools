@@ -128,8 +128,27 @@ export function computeRatios(pts) {
   return out;
 }
 
-export async function measureImage(img) {
+// Ray-casting point-in-polygon, local copy for the hand-trace check
+// (same rationale as breast.js: the trace travels in as data).
+function tracePointInPolygon(x, y, poly) {
+  if (!Array.isArray(poly) || poly.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1];
+    const xj = poly[j][0], yj = poly[j][1];
+    if ((yi > y) !== (yj > y) &&
+        x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+export async function measureImage(img, opts) {
   // img: HTMLImageElement (fully loaded). Returns rec like measure.py.
+  // opts: optional { trace } — { points: [[x,y],...] } hand-traced body
+  //   polygon in image pixel space. Adds rec.trace_check: how many of the
+  //   detected pose landmarks fall inside the traced region, with a warning
+  //   when most fall outside (bad trace or bad pose). The trace guides the
+  //   region; the ratios still come from the pose landmarks themselves.
   const rec = { ok: false, skip_reason: null, ratios: null, visibility: null, warnings: [] };
   const lm = await ensurePose();
   if (!lm) { rec.skip_reason = 'pose model failed to load'; return rec; }
@@ -173,6 +192,28 @@ export async function measureImage(img) {
     rec.ok = false; rec.ratios = null;
     rec.skip_reason = 'degenerate geometry (near-zero denominator)';
     return rec;
+  }
+  // Hand-trace region check: the user's traced outline is the initial body
+  // region guide — the pose skeleton should mostly live inside it.
+  const tracePts = opts && opts.trace && Array.isArray(opts.trace.points)
+    ? opts.trace.points : null;
+  if (tracePts && tracePts.length >= 3) {
+    const iw = img.naturalWidth || img.width || 0;
+    const ih = img.naturalHeight || img.height || 0;
+    let inside = 0, total = 0;
+    for (const p of L) {
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) continue;
+      total++;
+      if (tracePointInPolygon(p.x * iw, p.y * ih, tracePts)) inside++;
+    }
+    if (total > 0) {
+      rec.trace_check = {
+        landmarks_inside: inside, landmarks_total: total,
+        fraction: Math.round((inside / total) * 1000) / 1000,
+      };
+      if (inside / total < 0.5)
+        rec.warnings.push('most pose landmarks fall outside the hand-traced body region — check the trace or the pose');
+    }
   }
   rec.ok = true;
   return rec;

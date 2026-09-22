@@ -8,11 +8,12 @@
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, disposeLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js?v=20260922b';
-import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260922c';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody, renderAnchor } from './render.js?v=20260922b';
-import { ensurePose, disposePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260922b';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260922h';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody, renderAnchor } from './render.js?v=20260922h';
+import { ensurePose, disposePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260922h';
 import { ensureSegmenter, disposeSegmenter, segmentPerson, extractContour, extractLoops, smoothContour, silhouetteMetrics, drawOutline, silhouetteLabel } from '../attraction/js/silhouette.js?v=20260922b';
 import { faceAnchor, selectContour, validateAgainstAnchor, pointsBbox } from './face-anchor.js';
+import { simplifyStroke, traceUsable, traceLandmarkCoverage } from './trace.js';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 import { planLifecycle, createModelManager, runPlannedSteps, MODEL_DEFS } from './model-lifecycle.js?v=20260922b';
 import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } from './resume-util.js?v=20260922b';
@@ -92,6 +93,9 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
   let bodyView = 'skeleton'; // preview overlay mode: outline | skeleton | both
   let lastBodyResult = null; // body-telemetry result, for the lazy outline toggle
   let anchorCache = {};      // faceIdx -> faceAnchor() result (or null); per photo
+  let bodyTrace = null;      // hand-traced body polygon {points:[[x,y]...]} in photo px; per photo
+  let traceMode = false;     // finger-draw mode on the preview canvas
+  let traceStroke = null;    // in-progress stroke (photo px), null when not drawing
 
   /* ---------------- model loading ---------------- */
 
@@ -437,8 +441,11 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
     // anchor seed-band veto + face_anchor/face_anchor_check in the report.
     // Absent anchor (body off, or anchor failed): exactly the old behavior.
     const faceIdx = faceA;
+    // Hand trace (Dan's idea): the user's traced body outline, passed as
+    // opts.trace — nipple seeds outside it are rejected pre-scoring as
+    // background clutter. No trace: exactly the old behavior.
     const rep = measureBreastTelemetry(photo.rgb, photo.w, photo.h, fileName,
-      faces.map(f => f.bbox), { anchor: anchorCache[faceIdx] });
+      faces.map(f => f.bbox), { anchor: anchorCache[faceIdx], trace: bodyTrace });
     if (!rep) throw new Error('breast telemetry: could not resolve nipple/areola/nail landmarks in this photo');
     const v = validateBreastTelemetry(rep);
     if (!v.ok) throw new Error('breast telemetry schema invalid: ' + v.errors.join('; '));
@@ -551,7 +558,7 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
     // Strict full-body ratios (the body-metrics lab path: needs
     // shoulders-through-ankles); the stick figure draws from raw regardless.
     let strict = null;
-    try { strict = raw ? await measureBodyImage(photo.img) : { ok: false, skip_reason: 'no pose landmarks' }; }
+    try { strict = raw ? await measureBodyImage(photo.img, { trace: bodyTrace }) : { ok: false, skip_reason: 'no pose landmarks' }; }
     catch (e) { strict = { ok: false, skip_reason: String((e && e.message) || e) }; }
     // Face anchor: expected body box from the 7.5-heads canon, then the
     // validation gate — the detected pose bbox must land inside it
@@ -577,6 +584,26 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
         } else anchor_note = 'face anchor derived, but the pose has no finite landmarks to check against.';
       } else anchor_note = 'face landmarks failed — body search ran full-frame.';
     } else anchor_note = 'no face anchor — full-frame search.';
+    // Hand trace (Dan's idea): the user's traced outline is the initial body
+    // region guide. Its bbox replaces the pose bbox as the "detected" body
+    // box in the anchor gate (their ground truth beats the pose bbox), and
+    // the pose landmarks get a coverage check against the polygon — guide
+    // sanity, not a veto: the pose still computes.
+    let trace_guide = null;
+    const tu = bodyTrace ? traceUsable(bodyTrace, photo.w, photo.h) : null;
+    if (tu && tu.usable) {
+      const pts = raw.filter(p => p && isFinite(p.x) && isFinite(p.y))
+        .map(p => ({ x: p.x * photo.w, y: p.y * photo.h }));
+      trace_guide = {
+        points: tu.points, bbox: tu.bbox, area_fraction: tu.area_fraction,
+        landmark_coverage: pts.length ? traceLandmarkCoverage(bodyTrace, pts) : null,
+      };
+      if (anchor_check && face_anchor) {
+        const detected = { x1: tu.bbox.x1, y1: tu.bbox.y1, x2: tu.bbox.x2, y2: tu.bbox.y2 };
+        anchor_check = { detected, ...validateAgainstAnchor(face_anchor.expected, detected) };
+        anchor_note = (anchor_note ? anchor_note + ' ' : '') + 'detected box is your hand-traced outline.';
+      }
+    }
     return {
       pose_png_dataurl: buildBodyExportPng(),
       has_outline: false, // filled in if the user loads the outline via the toggle
@@ -589,6 +616,7 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
       silhouette_error: 'pending',
       silhouette_anchor: null, // lazy: contour loop pick vs the anchor, from the toggle
       face_anchor, anchor_check, anchor_note,
+      trace_guide,
       model: 'MediaPipe PoseLandmarker (pose_landmarker_lite, float16)',
       method: '33 landmarks → 9 segment lengths + 7 scale-invariant ratios (same definitions as the body-metrics lab); body outline = largest person-segment contour at 256px, loaded on demand',
     };
@@ -669,6 +697,19 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
       drawOutline(ctx, silCache.contour, cv.width, cv.height,
         { stroke: 'rgba(125,211,252,0.9)', width: 2 });
     }
+    // Hand trace: dashed cyan polygon (photo px -> canvas px). Rendered last
+    // so it sits above the model overlays — it's the user's own ground truth.
+    if (bodyTrace && bodyTrace.points && bodyTrace.points.length >= 3) {
+      const k = cv.width / photo.w;
+      ctx.strokeStyle = 'rgba(34,211,238,0.95)';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([8, 5]);
+      ctx.beginPath();
+      bodyTrace.points.forEach(([x, y], i) => { i ? ctx.lineTo(x * k, y * k) : ctx.moveTo(x * k, y * k); });
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     // the outline/skeleton toggle only means something once one of them exists
     const bvr = $('bodyViewRow');
     if (bvr) bvr.style.display = (poseRaw || hasOutline) ? '' : 'none';
@@ -717,6 +758,11 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
   function renderChips() {
     const box = $('chipsA');
     box.innerHTML = '';
+    const has = faces.length > 0;
+    const title = $('facecardTitle');
+    if (title) title.textContent = has ? 'faces detected' : 'photo';
+    const sn = $('subjectNote');
+    if (sn) sn.style.display = has ? '' : 'none';
     faces.forEach((f, i) => {
       const b = document.createElement('button');
       b.className = 'chip' + (i === faceA ? ' on' : '');
@@ -728,6 +774,120 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
       };
       box.appendChild(b);
     });
+  }
+
+  /* ---------------- hand trace (body region guide) ---------------- */
+  // The user finger-draws the body outline on the photo. The polygon (photo
+  // px) becomes the initial search-region guide for the body-symmetry and
+  // breast-telemetry instruments. No model needed — this path works even
+  // where the segmentation model gets jetsam-killed.
+
+  function syncTraceUI() {
+    const t = $('traceToggle'), c = $('traceClear');
+    if (t) {
+      t.textContent = traceMode ? 'tracing… tap to cancel' : 'trace body';
+      t.classList.toggle('on', traceMode);
+    }
+    if (c) c.classList.toggle('hidden', !bodyTrace);
+  }
+
+  function setTraceMode(on) {
+    traceMode = on && !!photo;
+    traceStroke = null;
+    const cv = $('preview');
+    cv.style.touchAction = traceMode ? 'none' : '';
+    cv.style.cursor = traceMode ? 'crosshair' : '';
+    syncTraceUI();
+    if (traceMode)
+      uploadStatus('draw the body outline with your finger — lift to finish. One continuous loop is best.');
+  }
+
+  // Pointer event -> photo pixel coordinates. Robust to CSS scaling via
+  // getBoundingClientRect (the canvas is max-width:100%).
+  function canvasToPhoto(e) {
+    const cv = $('preview');
+    const r = cv.getBoundingClientRect();
+    const k = cv.width / photo.w; // canvas px per photo px (drawPreview's scale)
+    const cx = (e.clientX - r.left) * (cv.width / Math.max(1, r.width));
+    const cy = (e.clientY - r.top) * (cv.height / Math.max(1, r.height));
+    return [cx / k, cy / k];
+  }
+
+  function traceDown(e) {
+    if (!traceMode || !photo) return;
+    e.preventDefault();
+    const cv = $('preview');
+    try { cv.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
+    drawPreview(); // clean base; segments draw incrementally from here
+    traceStroke = [canvasToPhoto(e)];
+  }
+
+  function traceMove(e) {
+    if (!traceMode || !traceStroke || !photo) return;
+    e.preventDefault();
+    const [x, y] = canvasToPhoto(e);
+    const last = traceStroke[traceStroke.length - 1];
+    const cv = $('preview'), k = cv.width / photo.w;
+    if (Math.hypot((x - last[0]) * k, (y - last[1]) * k) < 3) return; // 3 canvas-px spacing
+    traceStroke.push([x, y]);
+    const ctx = cv.getContext('2d');
+    ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(last[0] * k, last[1] * k);
+    ctx.lineTo(x * k, y * k);
+    ctx.stroke();
+  }
+
+  async function traceUp() {
+    if (!traceMode || !traceStroke) return;
+    const pts = traceStroke;
+    traceStroke = null;
+    setTraceMode(false);
+    if (pts.length < 4) { drawPreview(); uploadStatus('trace too short — try again.'); return; }
+    const simple = simplifyStroke(pts, Math.max(2, photo.w / 500));
+    const chk = traceUsable({ points: simple }, photo.w, photo.h);
+    if (!chk.usable) {
+      drawPreview();
+      uploadStatus('trace rejected: ' + chk.reason + ' — try again.', true);
+      return;
+    }
+    bodyTrace = { points: simple };
+    try {
+      await idbPut('trace', { photoName, w: photo.w, h: photo.h, points: simple });
+    } catch (_) { /* best-effort */ }
+    syncTraceUI();
+    drawPreview();
+    uploadStatus('trace saved — ' + chk.points + ' points, ' +
+      Math.round(chk.area_fraction * 100) + '% of frame. Body & breast instruments will use it as their search region.');
+  }
+
+  function traceCancel() {
+    traceStroke = null;
+    if (traceMode) setTraceMode(false);
+    if (photo) drawPreview();
+  }
+
+  async function clearTrace() {
+    bodyTrace = null;
+    try { await idbPut('trace', null); } catch (_) { /* best-effort */ }
+    syncTraceUI();
+    if (photo) drawPreview();
+    uploadStatus('trace cleared.');
+  }
+
+  // Re-attach a stored trace when the same photo is picked again (or the
+  // page reloaded after a pre-run crash). Keyed on photo name + dimensions.
+  async function restoreTrace() {
+    bodyTrace = null;
+    try {
+      const t = await idbGet('trace');
+      if (t && t.photoName === photoName && t.w === photo.w && t.h === photo.h &&
+          traceUsable({ points: t.points }, photo.w, photo.h).usable) {
+        bodyTrace = { points: t.points };
+        uploadStatus('photo ready — restored your traced outline. Pick instruments and run.');
+      }
+    } catch (_) { /* best-effort */ }
+    syncTraceUI();
   }
 
   /* ---------------- main flow ---------------- */
@@ -768,7 +928,10 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
       if (modelMgr) { try { await modelMgr.releaseAll(); } catch (e) {} }
       modelMgr = buildModelManager();
       await idbDel('current'); // a new photo invalidates any old resume record
+      await restoreTrace(); // re-attach the hand trace if this exact photo was traced before
       drawPreview();
+      renderChips(); // sets the photo card title ("photo" vs "faces detected")
+      $('facecard').classList.remove('hidden'); // the photo is visible immediately — trace before run
       $('runcard').classList.remove('hidden'); // instruments were hidden by resetPhotoState() above
       $('runstate').textContent = 'photo ready — pick instruments and run.';
       uploadStatus('photo ready — pick instruments and run.');
@@ -793,8 +956,10 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
     poseRaw = null; poseTried = false;
     silCache = null; silTried = false;
     anchorCache = {};
+    bodyTrace = null; traceMode = false; traceStroke = null;
     lastBodyResult = null;
     bodyView = 'skeleton'; syncBodyViewCtl();
+    syncTraceUI();
     $('facecard').classList.add('hidden');
     $('runcard').classList.add('hidden');
   }
@@ -876,6 +1041,7 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
         faces: sanitizeFaces(faces),
         done: [...runState.done], order: runState.order, html: runState.html,
         rep: runState.rep, telePng: window.__wbTelePng || null,
+        trace: bodyTrace, // hand-traced body region guide, restored on resume
         startedAt: runState.startedAt, savedAt: Date.now(),
       });
     } catch (e) { /* resume is best-effort; never break the run */ }
@@ -1064,6 +1230,9 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
       $('tBust').checked = !!rec.instruments.bust;
       faces = rec.faces || [];
       faceA = rec.faceA || 0;
+      bodyTrace = (rec.trace && traceUsable({ points: rec.trace.points }, photo.w, photo.h).usable)
+        ? { points: rec.trace.points } : null;
+      syncTraceUI();
       runState = {
         sel: rec.instruments, done: new Set(rec.done || []),
         order: rec.order || [], html: rec.html || {},
@@ -1095,7 +1264,7 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
 
   /* ---------------- wiring ---------------- */
 
-  uploadStatus('build 20260922g — pick a photo to begin.');
+  uploadStatus('build 20260922h — pick a photo to begin.');
   const drop = $('drop'), fileInput = $('file');
   drop.onclick = () => fileInput.click();
   drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } };
@@ -1119,6 +1288,15 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
     if (item) handleFile(item.getAsFile());
   });
   $('run').onclick = run;
+  // hand trace controls: the trace button toggles finger-draw mode on the
+  // preview canvas; the clear button drops the stored trace.
+  $('traceToggle').onclick = () => setTraceMode(!traceMode);
+  $('traceClear').onclick = clearTrace;
+  const pvc = $('preview');
+  pvc.addEventListener('pointerdown', traceDown);
+  pvc.addEventListener('pointermove', traceMove);
+  pvc.addEventListener('pointerup', traceUp);
+  pvc.addEventListener('pointercancel', traceCancel);
   // body overlay segmented control (outline / skeleton / both)
   function syncBodyViewCtl() {
     document.querySelectorAll('#bodyViewCtl .chip').forEach(b =>

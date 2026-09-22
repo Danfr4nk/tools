@@ -378,14 +378,38 @@ export function vetoSeedBlobs(blobs, faces) {
 //      band are rejected pre-scoring — finer than the face-box veto, which
 //      stays. Skipped when the anchor is low-confidence; the band follows
 //      the anchor's rolled face axis, so tilted heads are handled.
+//   7. Hand-trace veto (2026-09-22, optional): when the user finger-traced
+//      the body outline, candidates outside the traced polygon are rejected
+//      pre-scoring — the trace is the initial search-region guide. The
+//      nipple is always inside the body outline, so this veto cannot
+//      false-reject a true nipple; it only kills background clutter.
 // Validated against both reference photos (lands on the true nipple).
-export function detectNipple(rgb, w, h, skin, faces, anchor) {
+// Ray-casting point-in-polygon for the hand-trace veto. Local copy (not
+// imported from workbench/trace.js) so the dependency direction stays
+// clean: the trace travels into this module as data, never as an import.
+function tracePointInPolygon(x, y, poly) {
+  if (!Array.isArray(poly) || poly.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1];
+    const xj = poly[j][0], yj = poly[j][1];
+    if ((yi > y) !== (yj > y) &&
+        x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+export function detectNipple(rgb, w, h, skin, faces, anchor, trace) {
   // faces: optional array of [x1,y1,x2,y2] (or {bbox:[x1,y1,x2,y2]})
   // anchor: optional faceAnchor() result, same pixel space (see
   //   anchorUsable/anchorBandCheck). Ignored when unusable.
+  // trace: optional { points: [[x,y],...] } hand-traced body polygon, same
+  //   pixel space. Ignored when it has fewer than 3 points.
   const bandOn = anchorUsable(anchor);
   let bandVetoed = 0;
-  // faces: optional array of [x1,y1,x2,y2] (or {bbox:[x1,y1,x2,y2]})
+  const tracePts = trace && Array.isArray(trace.points) ? trace.points : null;
+  const traceOn = !!(tracePts && tracePts.length >= 3);
+  let traceVetoed = 0;
   const n = w * h;
   const V = new Float64Array(n), A = new Float64Array(n);
   for (let i = 0, j = 0; i < n; i++, j += 3) {
@@ -421,6 +445,9 @@ export function detectNipple(rgb, w, h, skin, faces, anchor) {
     const cx = b.centroid.x, cy = b.centroid.y;
     // Anchor torso-band veto, before any scoring (cheap, pure).
     if (bandOn && anchorBandCheck(anchor, cx, cy).inside === false) { bandVetoed++; continue; }
+    // Hand-trace veto: the nipple is inside the body outline; anything
+    // outside the user's traced polygon is background clutter.
+    if (traceOn && !tracePointInPolygon(cx, cy, tracePts)) { traceVetoed++; continue; }
     const coreV = [], ringV = [], annA = [], bgA = [];
     const R = 130;
     for (let dy = -R; dy <= R; dy++) {
@@ -443,7 +470,7 @@ export function detectNipple(rgb, w, h, skin, faces, anchor) {
     const redness = median(annA) - median(bgA);
     if (dV > 12 && redness > 2) cands.push({ x: cx, y: cy, dV, redness });
   }
-  if (!cands.length) return { vetoed, bandVetoed }; // every candidate vetoed: honest failure, no x/y
+  if (!cands.length) return { vetoed, bandVetoed, traceVetoed }; // every candidate vetoed: honest failure, no x/y
 
   // cluster density: neighbours within 70px
   for (const c of cands) {
@@ -469,7 +496,7 @@ export function detectNipple(rgb, w, h, skin, faces, anchor) {
       if (V[i] > 90 && As[i] > ba) { ba = As[i]; bx = x; by = y; }
     }
   }
-  return { x: bx, y: by, areolaSeed: win, vetoed, bandVetoed };
+  return { x: bx, y: by, areolaSeed: win, vetoed, bandVetoed, traceVetoed };
 }
 
 // Areola: radial-edge scan on the CIELAB a-channel from the nipple center.
@@ -847,15 +874,19 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, opts) {
   // rgb: Float32Array/Uint8Array/Buffer of RGB bytes, length w*h*3.
   // faces: optional [[x1,y1,x2,y2],...] from the workbench's face detector —
   //   nipple seeds inside a face box are vetoed (see detectNipple).
-  // opts: optional { anchor } — a faceAnchor() result for this photo, same
-  //   pixel space. Enables the anchor seed-band veto (finer than the
+  // opts: optional { anchor, trace } — a faceAnchor() result for this photo,
+  //   same pixel space. Enables the anchor seed-band veto (finer than the
   //   face-box veto, which stays) and adds face_anchor / face_anchor_check
   //   to the report (expected vs detected numbers, PASS/SUSPECT — never
-  //   silent). Absent or unusable anchor: exactly the old behavior.
+  //   silent). trace: optional { points: [[x,y],...] } hand-traced body
+  //   polygon, same pixel space — candidates outside it are rejected as
+  //   background clutter. Absent or unusable anchor/trace: exactly the old
+  //   behavior.
   // Returns the exact breast_telemetry/v1 schema object, or null when the
   // pipeline cannot resolve the required landmarks.
   if (!rgb || rgb.length < w * h * 3) return null;
   const anchor = opts && opts.anchor;
+  const trace = opts && opts.trace;
 
   // 1. skin mask
   let skin = skinMask(rgb, w, h);
@@ -865,11 +896,12 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, opts) {
   // 2. nipple seed (areola-first; the old HSV dark-red-disk detector is gone —
   //    it locked onto hair). x == null means every candidate was vetoed as
   //    non-anatomical — fail honestly, don't fit fingers.
-  const nip = detectNipple(rgb, w, h, skin, faces, anchor);
+  const nip = detectNipple(rgb, w, h, skin, faces, anchor, trace);
   if (nip.x == null) return null;
   const nx = nip.x, ny = nip.y;
   const seedVetoes = nip.vetoed || 0;
   const bandVetoes = nip.bandVetoed || 0;
+  const traceVetoes = nip.traceVetoed || 0;
 
   // 3. areola radial-edge fit
   const ar = areolaRadial(rgb, w, h, nx, ny);
@@ -1061,6 +1093,14 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, opts) {
         (bandVetoes === 1 ? '' : 's') +
         ' rejected as outside the face-anchor torso band.';
   }
+  // Hand-trace note (independent of the anchor): the trace is the user's
+  // own region guide, so its veto count is always reported when it fired.
+  if (traceVetoes > 0)
+    rep.cup_estimate.note += ' ' + traceVetoes + ' rival nipple candidate' +
+      (traceVetoes === 1 ? '' : 's') +
+      ' rejected as outside the hand-traced body region.';
+  if (trace && Array.isArray(trace.points) && trace.points.length >= 3)
+    rep.trace_guide = { points: trace.points.length, vetoed_outside: traceVetoes };
   return rep;
 }
 

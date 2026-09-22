@@ -129,6 +129,18 @@ export function renderAnchor(r) {
   } else if (r.anchor_note) {
     h += row('check', r.anchor_note);
   }
+  // Hand-trace region guide (Dan's idea): the user's own traced outline is
+  // the initial body region — its bbox replaces the pose bbox as the
+  // "detected" box in the gate above.
+  const tg = r.trace_guide;
+  if (tg) {
+    h += row('hand trace', tg.points + ' points, ' + Math.round(tg.area_fraction * 100) + '% of frame') +
+      row('detected box source', 'your hand-traced outline');
+    if (tg.landmark_coverage)
+      h += row('pose landmarks inside trace',
+        tg.landmark_coverage.inside + '/' + tg.landmark_coverage.total +
+        ' (' + Math.round(tg.landmark_coverage.fraction * 100) + '%)');
+  }
   h += '</table>';
   if (chk && !chk.pass)
     h += '<div class="cav" style="border-color:#f87171"><b>SUSPECT body read</b> — the detected ' +
@@ -174,6 +186,9 @@ export function renderBreast(rep, photoImg) {
     row('cleavage x @ nipple height', mp.cleavage_x_at_nipple_height_px + ' px') +
     row('nail anchor', mp.nail_anchor_median_width_px + ' px median') +
     row('band table', Object.entries(ce.band_table).map(([b, c]) => b + ': ' + c).join(' · ')) +
+    (rep.trace_guide ? row('hand trace', rep.trace_guide.points + ' points, ' +
+      rep.trace_guide.vetoed_outside + ' rival seed' +
+      (rep.trace_guide.vetoed_outside === 1 ? '' : 's') + ' vetoed outside it') : '') +
     '</table>';
   h += '<p class="note"><b>method:</b> ' + esc(ce.method) + '</p>';
   h += '<p class="note"><b>assumption:</b> ' + esc(ce.assumption) + ' ' + esc(ce.note) + '</p>';
