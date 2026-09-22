@@ -99,21 +99,23 @@ function roman(degree, mode) {
   return (mode === 'maj' ? MAJ_ROMAN : MIN_ROMAN)[degree];
 }
 
-// voice-lead: spread chord tones in [48,72], choose the rotation minimizing
-// total movement from the previous voicing (common tones hold still)
+// voice-lead: spread chord tones in the sweet register [52,79], choose the
+// rotation minimizing movement from the previous voicing (common tones hold
+// still). Mud guard: penalize semitone/whole-tone clusters below 64 — low
+// extensions that smear get pushed to a cleaner inversion.
 function voiceChord(pcs, prev) {
   const sorted = [...pcs].sort((a, b) => a - b);
   let best = null, bestScore = Infinity;
   for (let rot = 0; rot < sorted.length; rot++) {
     const order = sorted.map((_, i) => sorted[(rot + i) % sorted.length]);
     const notes = [];
-    let m = 48 + ((order[0] - 48) % 12 + 12) % 12;
-    if (m < 48) m += 12;
+    let m = 52 + ((order[0] - 52) % 12 + 12) % 12;
+    if (m < 52) m += 12;
     notes.push(m);
     for (let i = 1; i < order.length; i++) {
       let n = notes[i - 1] + ((order[i] - notes[i - 1]) % 12 + 12) % 12;
       if (n <= notes[i - 1]) n += 12;
-      if (n > 76) n -= 12;
+      if (n > 79) n -= 12;
       notes.push(n);
     }
     let score = 0;
@@ -125,17 +127,26 @@ function voiceChord(pcs, prev) {
       }
       score += Math.max(0, Math.max(...notes) - Math.min(...notes) - 19) * 2;
     }
+    const srt = [...notes].sort((a, b) => a - b);
+    for (let i = 1; i < srt.length; i++) {
+      if (srt[i] - srt[i - 1] === 1 && srt[i - 1] < 64) score += 100; // low semitone rub
+    }
     if (score < bestScore) { bestScore = score; best = notes; }
   }
   return best;
 }
 
 const BASS_PATTERNS = {
-  garage: [ // UK-garage bounce: root down low, octave pop on the "and" of 2
-    { t: 0.0, oct: 0, d: 1.4 }, { t: 2.5, oct: 1, d: 0.4 }, { t: 3.0, oct: 0, d: 0.9 },
+  garage: [ // UK-garage 2-step: root stab, 16th pickup, octave pop, push
+    { t: 0.0, oct: 0, d: 0.7 }, { t: 0.75, oct: 0, d: 0.4 },
+    { t: 2.5, oct: 1, d: 0.4 }, { t: 3.0, oct: 0, d: 0.9 },
   ],
-  sustain: [{ t: 0.0, oct: 0, d: 3.8 }],   // warm held root
-  sub: [{ t: 0.0, oct: 0, d: 3.6 }, { t: 3.5, oct: 1, d: 0.4 }], // long sub + pop
+  sustain: [ // warm held root + fifth swell mid-bar
+    { t: 0.0, oct: 0, d: 3.8 }, { t: 2.0, oct: 0, semi: 7, d: 1.6 },
+  ],
+  sub: [ // long 808-style sub + octave pop at the turnaround
+    { t: 0.0, oct: 0, d: 3.4, glide: true }, { t: 3.5, oct: 1, d: 0.4 },
+  ],
 };
 
 function bassMidi(rootPc, oct) {
@@ -151,25 +162,44 @@ export function generateProgression(styleKey, opts = {}) {
   const rng = mulberry32(opts.seed ?? ((Math.random() * 1e9) | 0));
   const keyPc = opts.keyPc ?? (rng() * 12 | 0);
   const mode = opts.mode === 'auto' || !opts.mode ? st.mode : opts.mode;
-  const template = st.templates[(rng() * st.templates.length) | 0];
+  const bars = opts.bars === 8 ? 8 : 4;
+  const locked = opts.locked || [];
 
   const chords = [];
   let prev = null;
-  for (const deg of template) {
+  let template = null;
+  const buildChord = (deg, forceQuality) => {
     const root = degreePc(deg, keyPc, mode);
     const baseQ = degreeQuality(deg, mode);
     const fam = baseQ === 'min' ? 'min' : 'maj';
-    const quality = pickWeighted(rng, st.ext[fam]);
+    const quality = forceQuality || pickWeighted(rng, st.ext[fam]);
     const iv = QUALITY_IV[quality];
     const pcs = iv.map(s => (root + s) % 12);
     const notes = voiceChord(pcs, prev);
     prev = notes;
-    chords.push({
-      roman: roman(deg, mode),
+    return {
+      roman: deg === 5 && forceQuality === 'maj' && mode === 'min' ? 'V' : roman(deg, mode),
       name: ROOTS[root] + QUALITY_SFX[quality],
       root, quality, notes,
       bass: bassMidi(root, 0),
-    });
+    };
+  };
+
+  for (let b = 0; b < bars; b++) {
+    if (locked[b]) { // keep the locked chord, voice-lead through it
+      chords.push(locked[b]);
+      prev = locked[b].notes;
+      continue;
+    }
+    const phrasePos = b % 4;
+    if (!template || phrasePos === 0) {
+      // start a phrase: fresh 4-chord template
+      template = st.templates[(rng() * st.templates.length) | 0];
+    }
+    const isTurnaround = bars === 8 && b === 7;
+    chords.push(isTurnaround
+      ? buildChord(5, 'maj')          // harmonic-minor V lift into the loop
+      : buildChord(template[phrasePos]));
   }
 
   return {
@@ -177,6 +207,7 @@ export function generateProgression(styleKey, opts = {}) {
     keyName: ROOTS[keyPc], keyPc, mode,
     tempo: opts.tempo ?? st.tempo,
     swing: st.swing,
+    bars,
     chords,
     bassPattern: BASS_PATTERNS[st.bass],
     bassStyle: st.bass,

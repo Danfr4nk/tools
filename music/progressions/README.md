@@ -16,18 +16,28 @@ Live: https://danfr4nk.github.io/tools/music/progressions/
 ## How it works
 
 `progs.js` (pure JS, zero imports — browser + Node):
-1. Pick a 4-chord template of scale degrees from the lane's vocabulary.
+1. Pick a 4-chord template of scale degrees from the lane's vocabulary
+   (8-bar mode: two phrases, bar 8 forced to a harmonic-minor V turnaround).
 2. Assign extensions from the lane's weighted voicing table (e.g. nimino minor → min9 40%).
-3. Voice-lead: spread tones in octaves 3–5, choose the inversion minimizing movement from the previous chord — common tones hold still.
-4. Attach the lane's bass pattern (garage bounce / sustain / sub).
+3. Voice-lead: spread tones in the sweet register (MIDI 52–79), choose the
+   inversion minimizing movement from the previous chord — common tones hold
+   still, low semitone rubs penalized out (mud guard).
+4. Attach the lane's bass pattern (garage 2-step / sustain + fifth swell /
+   808-style sub with glide flag).
+5. Locks: pass `locked` chord objects to freeze positions across regenerations.
 
 `midi.js`: minimal SMF0 writer (pad + bass + optional 16th arp, tempo meta).
-`app.js`: WebAudio audition — detuned-saw pad through a lowpass, sine sub bass,
-optional swung arp with feedback delay. Export drops a `.mid` straight into
-GarageBand or any DAW.
+Humanized by default (timing/velocity jitter on bass+arp, seeded, pads stay
+grid-locked); `humanize:false` is bit-deterministic.
+`app.js`: WebAudio audition — stereo-widened detuned-saw pad through a
+sweeping lowpass, sine sub bass (808 glide on the LYNY lane), optional swung
+arp with feedback delay, gentle master compressor. Chord locks + 4/8 bar
+toggle. Export drops a `.mid` straight into GarageBand or any DAW.
 
 ## Test
 
 `node test-progs.mjs` — all 3 lanes × 3 seeds: 4 chords, piano-range notes,
 sub-range bass, well-formed names, compact voice-leading, MIDI round-trip
-(tempo meta present, note-ons match note-offs). Must print ALL PASS.
+(tempo meta present, note-ons match note-offs); 8-bar turnaround lands on V;
+locks survive regeneration; mud guard holds; humanized MIDI round-trips and
+unhumanized MIDI is deterministic. Must print ALL PASS.

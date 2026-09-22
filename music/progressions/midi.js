@@ -11,7 +11,14 @@ function vlq(n) {
 }
 
 // events: [{tick, bytes:[...]}] -> Uint8Array of a complete .mid file
-export function writeMidi({ tempo = 122, chords, bassPattern, arp = false, tpb = 480 }) {
+// humanize: tiny timing/velocity jitter on bass+arp so the export doesn't
+// feel quantized-dead (pads stay grid-locked — they're the harmonic bed)
+export function writeMidi({ tempo = 122, chords, bassPattern, arp = false, tpb = 480, humanize = true, seed = 1 }) {
+  let s = seed;
+  const jrnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const jit = (amt) => humanize ? Math.round((jrnd() * 2 - 1) * amt) : 0;
+  const jvel = (v, amt) => Math.max(1, Math.min(127, v + (humanize ? Math.round((jrnd() * 2 - 1) * amt) : 0)));
+
   const ev = [];
   const add = (tick, bytes) => ev.push({ tick, bytes });
 
@@ -28,19 +35,20 @@ export function writeMidi({ tempo = 122, chords, bassPattern, arp = false, tpb =
       add(start + barTicks - 24, [0x80, n, 0]);
     }
     for (const bp of bassPattern) {
-      const t = start + Math.round(bp.t * tpb);
+      const t = start + Math.round(bp.t * tpb) + jit(6);
       const dur = Math.round(bp.d * tpb);
-      const n = ch.bass + bp.oct * 12;
-      add(t, [0x90, n, 100]);
+      const n = ch.bass + bp.oct * 12 + (bp.semi || 0);
+      const v = jvel(bp.oct > 0 ? 88 : 100, 8);
+      add(t, [0x90, n, v]);
       add(t + dur, [0x80, n, 0]);
     }
     if (arp) {
       const tones = [];
       for (let o = 0; o < 2; o++) for (const n of ch.notes) tones.push(n + o * 12);
-      for (let s = 0; s < 16; s++) {
-        const t = start + s * (tpb / 4);
-        const n = tones[s % tones.length];
-        add(Math.round(t), [0x90, n, 64]);
+      for (let s2 = 0; s2 < 16; s2++) {
+        const t = start + s2 * (tpb / 4) + jit(5);
+        const n = tones[s2 % tones.length];
+        add(Math.round(t), [0x90, n, jvel(s2 % 4 === 0 ? 72 : 60, 10)]);
         add(Math.round(t + tpb / 4) - 12, [0x80, n, 0]);
       }
     }

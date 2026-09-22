@@ -43,6 +43,37 @@ for (const style of STYLE_KEYS) {
 const g = generateProgression('nimino', { keyPc: 7, mode: 'min', seed: 42 });
 ok(g.chords[0].root === 7 && g.chords[0].roman === 'i', 'G minor starts on i (Gm*)');
 
+// 8-bar: two phrases, turnaround V on bar 8
+const e8 = generateProgression('lyny', { keyPc: 7, mode: 'min', bars: 8, seed: 9 });
+ok(e8.chords.length === 8, '8-bar: 8 chords');
+ok(e8.chords[7].roman === 'V', `8-bar: turnaround is V (got ${e8.chords[7].roman} ${e8.chords[7].name})`);
+ok(e8.chords.every(c => c.notes.every(n => n >= 52 && n <= 79)),
+  '8-bar: pad notes in sweet register [52,79]');
+// mud guard: no semitone rubs below 64
+let muddy = 0;
+for (const p of [e8, g]) for (const c of p.chords) {
+  const s = [...c.notes].sort((a, b) => a - b);
+  for (let i = 1; i < s.length; i++) if (s[i] - s[i - 1] === 1 && s[i - 1] < 64) muddy++;
+}
+ok(muddy === 0, `mud guard: no low semitone rubs (${muddy} found)`);
+
+// locks: locked chord survives regeneration, neighbors re-voice around it
+const base = generateProgression('oskar', { keyPc: 0, mode: 'maj', seed: 5 });
+const relock = generateProgression('oskar', {
+  keyPc: 0, mode: 'maj', seed: 99, locked: [null, base.chords[1], null, null],
+});
+ok(relock.chords[1].name === base.chords[1].name, 'locked chord preserved');
+ok(relock.chords[1].notes.join(',') === base.chords[1].notes.join(','),
+  'locked chord voicing preserved');
+
+// humanized MIDI still round-trips
+const hm = writeMidi({ tempo: 124, chords: base.chords, bassPattern: base.bassPattern, arp: true, humanize: true, seed: 7 });
+const hi = parseMidiInfo(hm);
+ok(hi.noteOns === hi.noteOffs && hi.noteOns > 40, `humanized MIDI round-trips (${hi.noteOns} notes)`);
+const dm = writeMidi({ tempo: 124, chords: base.chords, bassPattern: base.bassPattern, humanize: false, seed: 7 });
+const dm2 = writeMidi({ tempo: 124, chords: base.chords, bassPattern: base.bassPattern, humanize: false, seed: 7 });
+ok(dm.join(',') === dm2.join(','), 'humanize=false is deterministic');
+
 // unknown style throws
 let threw = false;
 try { generateProgression('skrillex', {}); } catch { threw = true; }
