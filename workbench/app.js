@@ -769,6 +769,7 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
       modelMgr = buildModelManager();
       await idbDel('current'); // a new photo invalidates any old resume record
       drawPreview();
+      $('runcard').classList.remove('hidden'); // instruments were hidden by resetPhotoState() above
       $('runstate').textContent = 'photo ready — pick instruments and run.';
       uploadStatus('photo ready — pick instruments and run.');
       setBar(0);
