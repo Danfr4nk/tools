@@ -4,7 +4,7 @@
  * transformers/MediaPipe/ort stacks, so the standalone JSON importer can load
  * it even when the photo pipeline fails to boot.
  */
-import { drawBreastOverlay, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920b';
+import { drawBreastOverlay, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920f';
 
 export const esc = s => String(s).replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -57,21 +57,6 @@ export function renderTelemetry(r, faceIdx) {
   h += '</table><p class="note">Full 17-metric vector is in the exported JSON. ' +
     esc(r.method) + '. Measured on: ' + esc(r.measured_on || 'face crop') + '.</p>';
   return card('facial telemetry — face ' + (faceIdx + 1), h);
-}
-
-export function renderKinship(r) {
-  if (r.skipped)
-    return card('kinship', '<p class="note">' + esc(r.skipped) + '.</p>');
-  let h = '<div class="kpi">' +
-    '<div><div class="v">' + r.cosine_similarity.toFixed(4) + '</div><div class="l">cosine similarity</div></div>' +
-    '<div><div class="v">' + (r.kinship_confidence * 100).toFixed(1) + '%</div><div class="l">confidence</div></div>' +
-    '</div><p style="font-size:17px;font-weight:650;margin:6px 0">' + esc(r.verdict) + '</p>' +
-    '<p class="note">' + esc(r.verdict_note) + '</p>';
-  for (const c of r.caveats) h += '<div class="cav">' + esc(c) + '</div>';
-  h += '<p class="note">Face A: ' + esc(r.predicted.a.sex) + '/' + r.predicted.a.age +
-    ' · Face B: ' + esc(r.predicted.b.sex) + '/' + r.predicted.b.age + '. ' +
-    esc(r.calibration) + '.</p>';
-  return card('kinship — face ' + (r.face_a + 1) + ' vs face ' + (r.face_b + 1), h);
 }
 
 // ratioKeys + ratioLabelFn come from the caller (attraction/js/body.js) so this

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>body outline — true body tracing</title>
+<meta name="description" content="Upload a photo and the outline of the subject gets drawn from person segmentation: shoulder/waist/hip widths, three proportions, frame coverage. All on-device.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0e14; color: #e6e9f0;
+         font: 15px/1.55 -apple-system, "Segoe UI", Inter, Roboto, sans-serif; }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 28px 18px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: #8b93a7; margin: 0 0 20px; max-width: 70ch; }
+  .card { background: #121722; border: 1px solid #232b3d; border-radius: 14px;
+          padding: 18px; margin: 14px 0; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #aeb8cf;
+             text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+  .drop { border: 2px dashed #2b3a55; border-radius: 14px;
+          padding: 36px 20px; text-align: center; color: #8b93a7; cursor: pointer;
+          transition: border-color .15s, background .15s; }
+  .drop:hover, .drop.over { border-color: #7dd3fc; background: #101827; }
+  .drop .big { font-size: 17px; color: #cfd6e4; margin-bottom: 6px; }
+  button.go { background: #7dd3fc; color: #06202e; border: 0; border-radius: 10px;
+              font-size: 16px; font-weight: 700; padding: 12px 28px; cursor: pointer; }
+  button.go:disabled { opacity: .45; cursor: default; }
+  button.ghost { background: #1a2233; color: #cfd6e4; border: 1px solid #2b3a55;
+                 border-radius: 10px; padding: 9px 18px; font-size: 14px; cursor: pointer; }
+  .note { font-size: 13px; color: #8b93a7; }
+  .err { color: #f87171; }
+  .status { font-size: 13px; color: #8b93a7; min-height: 20px; margin-top: 8px; }
+  .hidden { display: none !important; }
+  .vh { position: absolute !important; width: 1px; height: 1px; margin: -1px;
+        padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .preview { max-width: 100%; border-radius: 10px; display: block; }
+  .kpi { display: flex; gap: 22px; flex-wrap: wrap; margin: 6px 0 4px; }
+  .kpi .v { font-size: 30px; font-weight: 750; letter-spacing: -0.02em; }
+  .kpi .l { font-size: 12px; color: #8b93a7; text-transform: uppercase; letter-spacing: .06em; }
+  table.metrics { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.metrics td { padding: 5px 8px; border-bottom: 1px solid #1c2434; }
+  table.metrics td.num { text-align: right; font-variant-numeric: tabular-nums; color: #cfd6e4; }
+  table.metrics td:first-child { color: #8b93a7; }
+  .foot { margin-top: 34px; color: #69718a; font-size: 13px; }
+</style>
+<script type="importmap">
+{ "imports": { "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm" } }
+</script>
+</head>
+<body>
+<div class="wrap">
+  <h1>body outline</h1>
+  <p class="sub">True body tracing — the outline of the subject gets drawn from
+  person segmentation, not the pose stick figure: shoulder/waist/hip widths,
+  three proportions, frame coverage. Everything runs on your device; nothing
+  is uploaded.</p>
+
+  <div class="card">
+    <h2>photo</h2>
+    <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload a photo">
+      <div class="big">drop a photo here, click to browse, or paste from clipboard</div>
+      <div>one photo — the subject gets traced</div>
+    </div>
+    <input type="file" id="file" accept="image/*" class="vh">
+    <div style="margin-top:14px; display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+      <button class="go" id="run" disabled>trace outline</button>
+      <button class="ghost hidden" id="dl">download annotated PNG</button>
+    </div>
+    <div class="status" id="status">idle.</div>
+  </div>
+
+  <div class="card hidden" id="stagecard">
+    <h2>trace</h2>
+    <canvas class="preview" id="preview"></canvas>
+  </div>
+
+  <div class="card hidden" id="metricscard">
+    <h2>silhouette</h2>
+    <div id="metrics"></div>
+  </div>
+
+  <p class="foot">Segmentation: MediaPipe ImageSegmenter (selfie_multiclass_256x256) —
+  hair, skin, clothes and accessories count as the person. The contour is the
+  largest closed loop of the person mask, smoothed. First run downloads the
+  model; everything is cached by your browser afterwards.</p>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
