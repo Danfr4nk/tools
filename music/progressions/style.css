@@ -8,6 +8,8 @@ button { background:#1d2129; color:#e8eaf0; border:1px solid #333a47; border-rad
 button:active { transform:scale(.97); }
 button.big { font-size:17px; padding:12px 22px; }
 button.on { border-color:#61afef; color:#61afef; }
+select { background:#1d2129; color:#e8eaf0; border:1px solid #333a47; border-radius:10px; padding:10px 12px; font-size:15px; max-width:100%; }
+.dimlabel { color:#8b93a3; font-size:13px; align-self:center; }
 .styles .style { flex:1; font-size:16px; padding:12px 0; }
 label { font-size:13px; color:#9aa0ad; display:flex; align-items:center; gap:8px; }
 select, input[type=range] { accent-color:#61afef; }

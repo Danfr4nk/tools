@@ -1,7 +1,7 @@
 // app.js — PROGRESSIONS UI: generate, audition (WebAudio), export MIDI.
 // v2: stereo mix + compressor, humanized timing, 808 glide on the LYNY sub,
 // chord locks, 4/8 bar toggle with turnaround.
-import { generateProgression, STYLE_KEYS, STYLE_META } from './progs.js';
+import { generateProgression, generateClassic, CLASSICS, CLASSIC_FAMS, STYLE_KEYS, STYLE_META } from './progs.js';
 import { writeMidi } from './midi.js';
 
 const ROOTS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -9,6 +9,8 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 const midiName = m => NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1);
 
 let style = 'nimino';
+let classicId = 'levels';
+let classicStyle = null; // null = the classic's own default flavor
 let bars = 4;
 let locks = []; // locked chord objects per position, or null
 let prog = null;
@@ -31,8 +33,58 @@ document.querySelectorAll('.style').forEach(b => {
     document.querySelectorAll('.style').forEach(x => x.classList.remove('on'));
     b.classList.add('on');
     style = b.dataset.style;
-    tempoSl.value = STYLE_META[style].tempo;
+    const isClassics = style === 'classics';
+    $('classicpick').style.display = isClassics ? '' : 'none';
+    $('classicstyles').style.display = isClassics ? '' : 'none';
+    if (!isClassics) {
+      tempoSl.value = STYLE_META[style].tempo;
+    } else {
+      const c = CLASSICS.find(e => e.id === classicId);
+      tempoSl.value = c.bpm;
+      modeSel.value = c.mode;
+    }
     $('bpmval').textContent = tempoSl.value;
+    locks = [];
+    generate();
+  };
+});
+
+// classics picker, grouped by family
+{
+  const sel = $('classicpick');
+  for (const fam of CLASSIC_FAMS) {
+    const og = document.createElement('optgroup');
+    og.label = fam;
+    for (const c of CLASSICS.filter(e => e.fam === fam)) {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = `${c.name} (${c.deg.join('-')})`;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  sel.value = classicId;
+  sel.onchange = () => {
+    classicId = sel.value;
+    classicStyle = null; // back to the classic's own default flavor
+    const c = CLASSICS.find(e => e.id === classicId);
+    tempoSl.value = c.bpm;
+    $('bpmval').textContent = c.bpm;
+    modeSel.value = c.mode;
+    locks = [];
+    generate();
+  };
+}
+
+// "play it as" — switch which lane's voicing/bass/swing plays the classic
+function syncCstyleButtons() {
+  document.querySelectorAll('.cstyle').forEach(x => {
+    x.classList.toggle('on', !!prog && prog.styleKey === 'classics' && x.dataset.cstyle === prog.voicingStyle);
+  });
+}
+document.querySelectorAll('.cstyle').forEach(b => {
+  b.onclick = () => {
+    classicStyle = b.dataset.cstyle;
     locks = [];
     generate();
   };
@@ -60,11 +112,21 @@ function generate() {
   stop();
   const locked = [];
   for (let i = 0; i < bars; i++) locked[i] = locks[i] || null;
-  prog = generateProgression(style, {
-    keyPc: +keySel.value, mode: modeSel.value,
-    tempo: +tempoSl.value, bars, locked,
-  });
+  if (style === 'classics') {
+    const c = CLASSICS.find(e => e.id === classicId);
+    modeSel.value = c.mode;
+    prog = generateClassic(classicId, {
+      keyPc: +keySel.value, tempo: +tempoSl.value, bars, locked,
+      styleKey: classicStyle || undefined,
+    });
+  } else {
+    prog = generateProgression(style, {
+      keyPc: +keySel.value, mode: modeSel.value,
+      tempo: +tempoSl.value, bars, locked,
+    });
+  }
   locks = prog.chords.map((c, i) => (locks[i] ? c : null));
+  syncCstyleButtons();
   renderCards();
 }
 
@@ -92,7 +154,10 @@ function renderCards() {
   });
   const meta = document.createElement('p');
   meta.className = 'meta';
-  meta.textContent = `${prog.style} lane · ${prog.keyName} ${prog.mode === 'min' ? 'minor' : 'major'} · ${prog.tempo} BPM · ${prog.bars} bars`;
+  const laneName = prog.styleKey === 'classics'
+    ? `CLASSICS · ${prog.classicFam} · as ${prog.voicingLabel}`
+    : `${prog.style} lane`;
+  meta.textContent = `${laneName} · ${prog.keyName} ${prog.mode === 'min' ? 'minor' : 'major'} · ${prog.tempo} BPM · ${prog.bars} bars`;
   wrap.appendChild(meta);
 }
 

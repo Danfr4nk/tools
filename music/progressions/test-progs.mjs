@@ -1,6 +1,6 @@
 // test-progs.mjs — node test for the progression generator + MIDI writer.
 // Must print PASS lines; any FAIL exits nonzero.
-import { generateProgression, STYLE_KEYS } from './progs.js';
+import { generateProgression, generateClassic, CLASSICS, STYLE_KEYS } from './progs.js';
 import { writeMidi, parseMidiInfo } from './midi.js';
 
 let fails = 0;
@@ -19,8 +19,8 @@ for (const style of STYLE_KEYS) {
       `${style} seed ${seed}: notes in piano range`);
     ok(p.chords.every(c => c.bass >= 28 && c.bass <= 48),
       `${style} seed ${seed}: bass in sub range`);
-    ok(p.chords.every(c => /^[A-G]#?(m|maj7|m7|maj9|m9|add9|m\(add9\)|m11)?$/.test(c.name)),
-      `${style} seed ${seed}: chord names well-formed (${p.chords.map(c => c.name).join(' ')})`);
+    ok(p.chords.every(c => /^[A-G]#?(m|7|maj7|m7)?$/.test(c.name)),
+      `${style} seed ${seed}: chord names are triads/7ths only (${p.chords.map(c => c.name).join(' ')})`);
     // voice-leading: adjacent chord movement stays compact
     let move = 0;
     for (let i = 1; i < 4; i++) {
@@ -73,6 +73,38 @@ ok(hi.noteOns === hi.noteOffs && hi.noteOns > 40, `humanized MIDI round-trips ($
 const dm = writeMidi({ tempo: 124, chords: base.chords, bassPattern: base.bassPattern, humanize: false, seed: 7 });
 const dm2 = writeMidi({ tempo: 124, chords: base.chords, bassPattern: base.bassPattern, humanize: false, seed: 7 });
 ok(dm.join(',') === dm2.join(','), 'humanize=false is deterministic');
+
+// ---- CLASSICS library ----
+const SIMPLE = /^[A-G]#?(m|7|maj7|m7)?$/;
+ok(CLASSICS.length >= 50, `CLASSICS library has ${CLASSICS.length} entries (>= 50)`);
+{
+  const ids = new Set();
+  for (const c of CLASSICS) {
+    ok(!ids.has(c.id), `unique classic id: ${c.id}`);
+    ids.add(c.id);
+    for (const b of [4, 8]) {
+      const p = generateClassic(c.id, { keyPc: 7, bars: b, seed: 3 });
+      ok(p.chords.length === b, `${c.id}: ${b} bars -> ${b} chords`);
+      ok(p.chords.every(ch => SIMPLE.test(ch.name)),
+        `${c.id}: triads/7ths only (${p.chords.map(ch => ch.name).join(' ')})`);
+      ok(p.chords.every(ch => ch.notes.every(n => n >= 52 && n <= 79)),
+        `${c.id}: pads in sweet register`);
+    }
+  }
+}
+// style switching: same progression, different lane flavor
+{
+  const lvN = generateClassic('levels', { keyPc: 7, seed: 11 });
+  const lvO = generateClassic('levels', { keyPc: 7, seed: 11, styleKey: 'oskar' });
+  const lvL = generateClassic('levels', { keyPc: 7, seed: 11, styleKey: 'lyny' });
+  ok(lvN.voicingStyle === 'nimino' && lvN.bassStyle === 'garage', 'levels default = nimino flavor, garage bass');
+  ok(lvO.voicingStyle === 'oskar' && lvO.bassStyle === 'sustain', 'levels as oskar = sustain bass');
+  ok(lvL.voicingStyle === 'lyny' && lvL.bassStyle === 'sub', 'levels as LYNY = sub bass');
+  const rom = p => p.chords.map(c => c.roman).join(' ');
+  ok(rom(lvN) === rom(lvO) && rom(lvO) === rom(lvL), `style switch keeps the progression (${rom(lvN)})`);
+  const sw = generateClassic('sensitive-female', { keyPc: 0, seed: 4, styleKey: 'nimino' });
+  ok(sw.swing === 0.12, 'style switch brings the lane swing (nimino 0.12)');
+}
 
 // unknown style throws
 let threw = false;
