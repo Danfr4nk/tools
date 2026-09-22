@@ -4,7 +4,7 @@
  * transformers/MediaPipe/ort stacks, so the standalone JSON importer can load
  * it even when the photo pipeline fails to boot.
  */
-import { drawBreastOverlay, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920f';
+import { drawBreastOverlay, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260922c';
 
 export const esc = s => String(s).replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

@@ -82,6 +82,18 @@ export async function ensureLandmarker(onStatus) {
 
 export function measurementReady() { return ready; }
 
+// Release the singleton instance and drop the reference, so a page that
+// runs instruments one at a time never holds two MediaPipe graphs at once.
+// The `failed` latch is left alone: a model that failed to load stays failed
+// for this page load. Safe to call when nothing is loaded.
+export function disposeLandmarker() {
+  if (landmarker) {
+    try { landmarker.close(); } catch (e) {}
+    landmarker = null;
+  }
+  ready = false;
+}
+
 export const LANDMARK_IDX = IDX;
 
 // Raw 468-landmark detection — the same detector the game uses.

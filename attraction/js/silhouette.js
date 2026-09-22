@@ -244,6 +244,14 @@ export async function ensureSegmenter(onStatus) {
   return segmenter;
 }
 
+// Release the singleton segmenter. Safe to call when nothing is loaded.
+export function disposeSegmenter() {
+  if (segmenter) {
+    try { segmenter.close(); } catch (e) {}
+    segmenter = null;
+  }
+}
+
 // image: any ImageSource (HTMLImageElement, canvas, ImageBitmap…).
 // Returns { mask: Uint8Array (1=person), w, h } at the model's native
 // resolution, or null on any failure (caller treats null as "unavailable").

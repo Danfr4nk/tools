@@ -82,6 +82,15 @@ export async function ensurePose(onStatus) {
   return landmarker;
 }
 
+// Release the singleton pose instance. See disposeLandmarker in measure.js
+// for the rationale. Safe to call when nothing is loaded.
+export function disposePose() {
+  if (landmarker) {
+    try { landmarker.close(); } catch (e) {}
+    landmarker = null;
+  }
+}
+
 // ---- math ----
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const r3 = (v) => Math.round(v * 1000) / 1000;

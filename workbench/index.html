@@ -21,6 +21,15 @@
   .bar { height: 8px; background: #1d2536; border-radius: 99px; overflow: hidden; margin: 8px 0; }
   .bar > div { height: 100%; width: 0; background: linear-gradient(90deg,#7dd3fc,#a78bfa); transition: width .2s; }
   #modelmsg { color: #8b93a7; font-size: 13px; min-height: 20px; }
+  .modellist { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+               gap: 6px 14px; margin-top: 10px; font-size: 13px; color: #8b93a7; }
+  .mrow { display: flex; align-items: center; gap: 8px; }
+  .mdot { width: 8px; height: 8px; border-radius: 99px; background: #2b3a55; flex: none; }
+  .mdot.load { background: #fbbf24; animation: pulse 1s infinite alternate; }
+  .mdot.ok { background: #4ade80; }
+  @keyframes pulse { from { opacity: .4; } to { opacity: 1; } }
+  #resumecard { border-color: #7dd3fc; }
+  #resumecard .btns { display: flex; gap: 10px; margin-top: 10px; }
   .drop { border: 2px dashed #2b3a55; border-radius: 14px;
           padding: 44px 20px; text-align: center; color: #8b93a7; cursor: pointer;
           transition: border-color .15s, background .15s; }
@@ -88,6 +97,26 @@
     <h2>models</h2>
     <div class="bar"><div id="modelfill"></div></div>
     <div id="modelmsg">warming up…</div>
+    <div class="modellist" id="modellist">
+      <div class="mrow" id="mod-det"><span class="mdot idle"></span>face detection — SCRFD — idle</div>
+      <div class="mrow" id="mod-ga"><span class="mdot idle"></span>gender + age — genderage — idle</div>
+      <div class="mrow" id="mod-vit"><span class="mdot idle"></span>age classifier — ViT — idle</div>
+      <div class="mrow" id="mod-land"><span class="mdot idle"></span>face landmarks — MediaPipe — idle</div>
+      <div class="mrow" id="mod-pose"><span class="mdot idle"></span>body pose — MediaPipe — idle</div>
+      <div class="mrow" id="mod-seg"><span class="mdot idle"></span>segmentation — MediaPipe — idle</div>
+    </div>
+    <div class="note" style="margin-top:8px">Models load one at a time, only when a
+    selected instrument needs them, and release when done — peak memory stays at
+    one model instead of all of them at once.</div>
+  </div>
+
+  <div class="card hidden" id="resumecard">
+    <h2>interrupted run</h2>
+    <div class="note" id="resumemsg"></div>
+    <div class="btns">
+      <button class="go" id="resumeyes">resume where it left off</button>
+      <button class="ghost" id="resumeno">discard</button>
+    </div>
   </div>
 
   <div class="card" id="uploadcard">
@@ -159,14 +188,15 @@
     <span class="status" id="exportstate"></span>
   </div>
 
-  <p class="foot">Shared detection: SCRFD (buffalo_l) → 5-point alignment → ArcFace embeddings.
+  <p class="foot">Shared detection: SCRFD (buffalo_l) → 5-point alignment.
   Age: ViT-Base bracket classifier (expected age = probability-weighted bracket midpoints) with a
   genderage regression second opinion. Telemetry: the same 17-ratio MediaPipe vector as the
-  attraction lab. Kinship: cosine similarity on ArcFace embeddings with the heuristic confidence
-  calibration — a resemblance meter, not a test. First run downloads models (~250&nbsp;MB total);
-  everything is cached by your browser afterwards.</p>
+  attraction lab. Body: MediaPipe pose + segmentation, cross-checked against the face-anchor
+  body prediction; breast telemetry runs its own pose cross-check. Models load one at a time
+  and only when a selected instrument needs them — a body-only run pulls just the pose model —
+  and each releases when done. Everything is cached by your browser afterwards.</p>
 </div>
-<script type="module" src="import.js?v=20260920f"></script>
-<script type="module" src="app.js?v=20260922a"></script>
+<script type="module" src="import.js?v=20260922c"></script>
+<script type="module" src="app.js?v=20260922b"></script>
 </body>
 </html>

@@ -7,13 +7,15 @@
  * Everything runs on-device. Nothing is uploaded.
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
-import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
-import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920f';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody, renderAnchor } from './render.js?v=20260922a';
-import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920f';
-import { ensureSegmenter, segmentPerson, extractContour, extractLoops, smoothContour, silhouetteMetrics, drawOutline, silhouetteLabel } from '../attraction/js/silhouette.js?v=20260921a';
+import { ensureLandmarker, disposeLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js?v=20260922b';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260922c';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody, renderAnchor } from './render.js?v=20260922b';
+import { ensurePose, disposePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260922b';
+import { ensureSegmenter, disposeSegmenter, segmentPerson, extractContour, extractLoops, smoothContour, silhouetteMetrics, drawOutline, silhouetteLabel } from '../attraction/js/silhouette.js?v=20260922b';
 import { faceAnchor, selectContour, validateAgainstAnchor, pointsBbox } from './face-anchor.js';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
+import { planLifecycle, createModelManager, runPlannedSteps, MODEL_DEFS } from './model-lifecycle.js?v=20260922b';
+import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } from './resume-util.js?v=20260922b';
 
 (function () {
   'use strict';
@@ -25,12 +27,14 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
   /* ---------------- constants ---------------- */
 
+  // Lazy loading (2026-09-22): models load only when a selected instrument
+  // needs them, and release right after. The 174MB ArcFace recognition model
+  // is GONE from this page entirely — nothing here ever needed it.
   const KIN_URLS = {
     det: '../kinship/models/det_10g.onnx',
     ga: '../kinship/models/genderage.onnx',
-    rec: 'https://huggingface.co/immich-app/buffalo_l/resolve/main/recognition/model.onnx',
   };
-  const KIN_SIZES = { det: 16923827, ga: 1322532, rec: 174383860 };
+  const KIN_SIZES = { det: 16923827, ga: 1322532 };
 
   const AGE_MODEL_ID = 'onnx-community/fairface_age_image_detection-ONNX';
   const AGE_LABELS = ['0-2', '3-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', 'more than 70'];
@@ -38,15 +42,19 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
   /* ---------------- state ---------------- */
 
-  let kSessions = null, kNames = null, detectReady = false;
-  let ageClassifier = null, ageReady = false;
-  let teleReady = false;
+  // Model lifecycle: every model lives in the manager. ensure() loads lazily
+  // (per selected instrument), release() disposes the session AND drops the
+  // reference — nothing lingers. Residency is the single source of truth:
+  // modelMgr.isLoaded('land') replaces the old teleReady flag, etc.
+  let modelMgr = null;
+  const detH = () => modelMgr.handle('det'); // { session, names } or undefined
+  const gaH = () => modelMgr.handle('ga');   // { session, names } or undefined
+  const vitH = () => modelMgr.handle('vit'); // transformers classifier or undefined
 
   let photo = null;          // {rgb, w, h, img}
   let photoName = 'upload';
   let faces = [];            // SCRFD faces, largest-first
   let faceA = 0;
-  let embedCache = {};       // faceIndex -> embedFace result
   let lastReport = null;
   let hasRun = false;
   let poseRaw = null, poseTried = false; // per-photo MediaPipe pose landmarks (33, normalized)
@@ -105,7 +113,11 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   }
 
   const T = (data, dims) => new ort.Tensor('float32', data, dims);
+  // The wrapper serializes session.run calls AND keeps the raw session
+  // reachable so the manager can truly release it (ort sessions free their
+  // WASM heap via session.release()).
   const wrap = s => ({
+    raw: s,
     run: feeds => queuedRun(() => {
       const real = {};
       for (const [k, v] of Object.entries(feeds)) real[k] = T(v.data, v.dims);
@@ -113,67 +125,88 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     }),
   });
 
-  // Stage 1 (upload): det + gender/age only — both local, ~18MB, fast.
-  // The 174MB HuggingFace recognition model loads lazily via ensureRec(),
-  // only when the age instrument's 2nd-opinion embedding is actually
-  // requested. Eagerly fetching it blocked every upload on it.
-  async function loadDetect(onp) {
-    const total = KIN_SIZES.det + KIN_SIZES.ga;
-    let done = 0;
-    const seen = { det: 0, ga: 0 };
-    const prog = (key, got) => {
-      done += got - seen[key]; seen[key] = got;
-      onp(done / total);
-    };
-    const mk = async (key, url) => {
-      const buf = await fetchBuf(url, KIN_SIZES[key], g => prog(key, g));
-      return ort.InferenceSession.create(buf);
-    };
-    const [det, ga] = await Promise.all(['det', 'ga'].map(k => mk(k, KIN_URLS[k])));
-    kSessions = { det: wrap(det), ga: wrap(ga) };
-    kNames = {
-      detIn: det.inputNames[0], detOut: det.outputNames,
-      gaIn: ga.inputNames[0], gaOut: ga.outputNames[0],
-    };
-    detectReady = true;
-  }
+  /* ---------------- model lifecycle ---------------- */
+  // Lazy + sequential + disposable. Each model loads only when the first
+  // selected instrument needing it runs, and releases right after the last
+  // one needing it finishes — peak memory is one model at a time (two
+  // briefly when the body anchor reuses telemetry's resident landmarker).
+  // Per-model status renders in the model list under the photo.
+  const MODEL_LABEL = {};
+  for (const [k, label] of MODEL_DEFS) MODEL_LABEL[k] = label;
 
-  // Stage 2 (lazy): the remote recognition model. Single shared promise so
-  // concurrent embedding requests don't double-download; resets on failure
-  // so a stall error is retryable. Only fetched when the age instrument's
-  // 2nd-opinion embedding is actually requested.
-  let recPromise = null;
-  function ensureRec(onp) {
-    if (kSessions.rec) return Promise.resolve();
-    if (!recPromise) {
-      recPromise = (async () => {
-        const buf = await fetchBuf(KIN_URLS.rec, KIN_SIZES.rec,
-          (got, total) => onp && onp(total ? got / total : 0));
-        const rec = await ort.InferenceSession.create(buf);
-        kSessions.rec = wrap(rec);
-        kNames.recIn = rec.inputNames[0];
-        kNames.recOut = rec.outputNames[0];
-      })().catch(e => { recPromise = null; throw e; });
+  function setModelStatus(key, state, pct) {
+    const el = $('mod-' + key);
+    if (!el) return;
+    const label = MODEL_LABEL[key] || key;
+    if (state === 'loading') {
+      const extra = (pct != null && isFinite(pct)) ? ' ' + Math.round(pct * 100) + '%' : '…';
+      el.innerHTML = '<span class="mdot load"></span>' + esc(label) + ' — loading' + extra;
+    } else if (state === 'ready') {
+      el.innerHTML = '<span class="mdot ok"></span>' + esc(label) + ' — ready';
+    } else if (state === 'released') {
+      el.innerHTML = '<span class="mdot idle"></span>' + esc(label) + ' — released';
+    } else {
+      el.innerHTML = '<span class="mdot idle"></span>' + esc(label) + ' — idle';
     }
-    return recPromise;
   }
 
-  async function loadAge(onStatus) {
-    onStatus('loading age model…');
-    ageClassifier = await pipeline('image-classification', AGE_MODEL_ID, {
-      dtype: 'q4f16',
-      progress_callback: ev => {
-        if (ev.status === 'progress' && ev.progress != null)
-          onStatus('loading age model… ' + ev.progress.toFixed(0) + '%');
+  function buildModelManager() {
+    return createModelManager({
+      load: async (key, onp) => {
+        if (key === 'det' || key === 'ga') {
+          const buf = await fetchBuf(KIN_URLS[key], KIN_SIZES[key], (got, total) => {
+            if (onp && total) onp(got / total);
+          });
+          const s = await ort.InferenceSession.create(buf);
+          if (key === 'det')
+            return { session: wrap(s), names: { detIn: s.inputNames[0], detOut: s.outputNames } };
+          return { session: wrap(s), names: { gaIn: s.inputNames[0], gaOut: s.outputNames[0] } };
+        }
+        if (key === 'vit') {
+          return await pipeline('image-classification', AGE_MODEL_ID, {
+            dtype: 'q4f16',
+            progress_callback: ev => {
+              if (ev.status === 'progress' && ev.progress != null && onp) onp(ev.progress / 100);
+            },
+          });
+        }
+        if (key === 'land') {
+          const lm = await ensureLandmarker(msg => { if (onp) onp(null); });
+          if (!lm) throw new Error('landmark model failed to load (' + (landmarkerError() || 'unknown reason') + ')');
+          return lm;
+        }
+        if (key === 'pose') {
+          const lm = await ensurePose(msg => { if (onp) onp(null); });
+          if (!lm) throw new Error('pose model failed to load');
+          return lm;
+        }
+        if (key === 'seg') {
+          const sg = await ensureSegmenter(msg => { if (onp) onp(null); });
+          if (!sg) throw new Error('segmentation model failed to load');
+          return sg;
+        }
+        throw new Error('unknown model key: ' + key);
       },
+      dispose: async (key, handle) => {
+        if (key === 'det' || key === 'ga') {
+          // ort sessions free their WASM heap via session.release()
+          // (onnxruntime-common API). Reference drop alone is not enough.
+          const raw = handle && handle.session && handle.session.raw;
+          if (raw && typeof raw.release === 'function') {
+            try { await raw.release(); } catch (e) {}
+          }
+          return;
+        }
+        if (key === 'vit') {
+          try { await handle.dispose(); } catch (e) {}
+          return;
+        }
+        if (key === 'land') { disposeLandmarker(); return; }
+        if (key === 'pose') { disposePose(); return; }
+        if (key === 'seg') { disposeSegmenter(); return; }
+      },
+      onStatus: (key, state, pct) => setModelStatus(key, state, pct),
     });
-    ageReady = true;
-  }
-
-  async function loadTelemetry(onStatus) {
-    const lm = await ensureLandmarker(onStatus);
-    if (!lm) throw new Error('landmark model failed to load (' + (landmarkerError() || 'unknown reason') + ')');
-    teleReady = true;
   }
 
   function setBar(pct, msg) {
@@ -183,29 +216,44 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
   /* ---------------- photo intake ---------------- */
 
+  // Decode + downscale an image to a working buffer. MAXD caps memory: the
+  // heavy vision models never need more than ~1024px on the long edge.
+  function rasterize(im, maxEdge) {
+    const sc = Math.min(1, maxEdge / Math.max(im.naturalWidth, im.naturalHeight));
+    const w = Math.max(1, Math.round(im.naturalWidth * sc));
+    const h = Math.max(1, Math.round(im.naturalHeight * sc));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(im, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    const rgb = new Float32Array(w * h * 3);
+    for (let i = 0, j = 0; i < px.length; i += 4, j += 3) {
+      rgb[j] = px[i]; rgb[j + 1] = px[i + 1]; rgb[j + 2] = px[i + 2];
+    }
+    return { rgb, w, h, img: im };
+  }
+
   function readPhoto(file) {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
       const im = new Image();
       im.onload = () => {
-        const MAXD = 1600;
-        const sc = Math.min(1, MAXD / Math.max(im.naturalWidth, im.naturalHeight));
-        const w = Math.max(1, Math.round(im.naturalWidth * sc));
-        const h = Math.max(1, Math.round(im.naturalHeight * sc));
-        const cv = document.createElement('canvas');
-        cv.width = w; cv.height = h;
-        const ctx = cv.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(im, 0, 0, w, h);
-        const px = ctx.getImageData(0, 0, w, h).data;
-        const rgb = new Float32Array(w * h * 3);
-        for (let i = 0, j = 0; i < px.length; i += 4, j += 3) {
-          rgb[j] = px[i]; rgb[j + 1] = px[i + 1]; rgb[j + 2] = px[i + 2];
-        }
         URL.revokeObjectURL(url);
-        resolve({ rgb, w, h, img: im });
+        resolve(rasterize(im, 1600));
       };
       im.onerror = () => reject(new Error('could not read image'));
       im.src = url;
+    });
+  }
+
+  // Restore the working photo from a resume record's JPEG.
+  function photoFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(rasterize(im, 1600));
+      im.onerror = () => reject(new Error('could not restore photo'));
+      im.src = dataUrl;
     });
   }
 
@@ -259,14 +307,18 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     const face = faces[faceIdx];
     if (!face) { anchorCache[faceIdx] = null; return null; }
     let lmPhoto = null;
-    try {
-      if (!teleReady) await loadTelemetry(m => { $('runstate').textContent = m; });
-      const cropImg = await cropToImage(face);
-      const tf = faceCropRect(face);
-      const lm = detectLandmarks(cropImg);
-      if (lm && lm.length >= 478)
-        lmPhoto = lm.map(p => ({ x: p.x * tf.side + tf.sx, y: p.y * tf.side + tf.sy }));
-    } catch (e) { lmPhoto = null; }
+    // Landmarks only when the landmarker is already resident (facial
+    // telemetry ran first in this run). A body-only run never pulls the
+    // landmark model for the anchor — it degrades to the bbox estimate.
+    if (modelMgr.isLoaded('land')) {
+      try {
+        const cropImg = await cropToImage(face);
+        const tf = faceCropRect(face);
+        const lm = detectLandmarks(cropImg);
+        if (lm && lm.length >= 478)
+          lmPhoto = lm.map(p => ({ x: p.x * tf.side + tf.sx, y: p.y * tf.side + tf.sy }));
+      } catch (e) { lmPhoto = null; }
+    }
     const a = faceAnchor(lmPhoto, face.bbox, photo.w, photo.h);
     anchorCache[faceIdx] = a;
     return a;
@@ -275,9 +327,11 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   /* ---------------- instruments ---------------- */
 
   async function instrumentAge(faceIdx) {
-    if (!ageReady) await loadAge(m => { $('runstate').textContent = m; });
+    // The run plan ensures the ViT before this step; ensure() is a no-op
+    // when it is already resident.
+    const classifier = await modelMgr.ensure('vit');
     const crop = faceCropCanvas(faces[faceIdx], 224);
-    const out = await ageClassifier(crop, { top_k: 9 });
+    const out = await classifier(crop, { top_k: 9 });
     const byLabel = {};
     for (const r of out) byLabel[r.label] = r.score;
     const probs = AGE_LABELS.map(l => ({ label: l, score: byLabel[l] || 0 }));
@@ -294,9 +348,9 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   }
 
   async function instrumentTelemetry(faceIdx) {
-    if (!teleReady) {
-      await loadTelemetry(m => { $('runstate').textContent = m; });
-    }
+    // The run plan ensures the landmarker before this step; ensure() is a
+    // no-op when it is already resident.
+    await modelMgr.ensure('land');
     const cropImg = await cropToImage(faces[faceIdx]);
     let m = measureImage(cropImg);
     let src = 'face crop';
@@ -349,8 +403,12 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     // the mound flood cannot cross (stops the arm-leak scribbles), and the
     // same landmarks feed the cross-check below.
     const pose = await ensurePoseRaw();
+    // Face anchor (computed by the body instrument when it ran): enables the
+    // anchor seed-band veto + face_anchor/face_anchor_check in the report.
+    // Absent anchor (body off, or anchor failed): exactly the old behavior.
+    const faceIdx = faceA;
     const rep = measureBreastTelemetry(photo.rgb, photo.w, photo.h, fileName,
-      faces.map(f => f.bbox), pose);
+      faces.map(f => f.bbox), { anchor: anchorCache[faceIdx] });
     if (!rep) throw new Error('breast telemetry: could not resolve nipple/areola/nail landmarks in this photo');
     const v = validateBreastTelemetry(rep);
     if (!v.ok) throw new Error('breast telemetry schema invalid: ' + v.errors.join('; '));
@@ -370,12 +428,14 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   }
 
   // Raw 33-landmark pose for the cross-check, cached per photo. No visibility
-  // gating here — poseCrossCheck degrades per-check on its own.
+  // gating here — poseCrossCheck degrades per-check on its own. The pose
+  // model itself is owned by the model manager (loads once, releases after
+  // the last instrument needing it).
   async function ensurePoseRaw() {
     if (poseTried) return poseRaw;
     poseTried = true;
     try {
-      const lm = await ensurePose(m => { $('runstate').textContent = m; });
+      const lm = await modelMgr.ensure('pose');
       if (!lm) return null;
       const res = lm.detect(photo.img);
       const poses = res.landmarks || res.poseLandmarks || [];
@@ -392,7 +452,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     if (silTried) return silCache;
     silTried = true;
     try {
-      const seg = await ensureSegmenter(m => { $('runstate').textContent = m; });
+      const seg = await modelMgr.ensure('seg');
       if (!seg) return null;
       // Downscale first: the model is 256x256 internally, so feeding a 12MP
       // iPhone photo straight into the GPU delegate just burns memory — on
@@ -504,16 +564,19 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     };
   }
 
-  async function embeddingFor(idx) {
-    if (!embedCache[idx]) {
-      // Recognition model loads here, on demand — progress goes to runstate.
-      await ensureRec(p => {
-        $('runstate').textContent = 'loading face-recognition model (174MB, one-time)… ' +
-          (p * 100).toFixed(0) + '%';
-      });
-      embedCache[idx] = await P.embedFace(kSessions, kNames, photo.rgb, photo.w, photo.h, faces[idx]);
+  // 2nd opinion for the age card: gender/age CNN on a tight face crop.
+  // (The 174MB ArcFace embedding is gone — the vector was never used.)
+  // Returns null on any failure; the card falls back to the ViT bracket.
+  async function attrFor(faceIdx) {
+    try {
+      const gh = gaH() || await modelMgr.ensure('ga');
+      const attr = await P.genderAgeCrop(gh.session, gh.names, photo, faceIdx, faces);
+      const inp = await P.genderAgeInput(gh.session, gh.names, attr);
+      const out = await gh.session.run({ [gh.names.gaIn]: inp });
+      return { gender: out[gh.names.gaOut].data[0], age: out[gh.names.gaOut].data[1] };
+    } catch (e) {
+      return null;
     }
-    return embedCache[idx];
   }
 
   /* ---------------- rendering ---------------- */
@@ -659,121 +722,323 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     $('runstate').textContent = 'reading photo…';
     $('report').innerHTML = '';
     $('exportcard').classList.add('hidden');
+    $('resumecard').classList.add('hidden');
     hasRun = false;
+    runState = null;
     window.__wbTelePng = null; // stale annotated PNGs never survive a new photo
     try {
       photo = await readPhoto(file);
       photoName = (file && file.name) || 'upload';
-      faces = []; embedCache = {}; faceA = 0;
-      poseRaw = null; poseTried = false; // fresh pose per photo
-      silCache = null; silTried = false; // fresh silhouette per photo
-      anchorCache = {}; // fresh face anchor per photo
-      lastBodyResult = null;
-      bodyView = 'skeleton'; syncBodyViewCtl();
-      if (!detectReady) {
-        setBar(0, 'loading detection models…');
-        await loadDetect(pct => setBar(pct, 'loading detection models… ' + (pct * 100).toFixed(0) + '%'));
-        setBar(1, 'detection models ready — everything runs on your device');
-      }
-      $('runstate').textContent = 'detecting faces…';
-      faces = await P.detectFaces(kSessions, kNames, photo.rgb, photo.w, photo.h);
-      const noFaceMode = !faces.length && ($('tBust').checked || $('tBody').checked);
-      if (!faces.length && !noFaceMode) {
-        $('runstate').textContent = 'no face detected in this photo';
-        return;
-      }
-      faceA = 0;
-      $('facecard').classList.remove('hidden');
-      $('runcard').classList.remove('hidden');
-      renderChips(); drawPreview();
-      $('runstate').textContent = faces.length + ' face' + (faces.length > 1 ? 's' : '') +
-        ' detected' + (noFaceMode ? ' — body-only mode (breast / body telemetry need no face)' : ' — pick instruments and run.');
+      resetPhotoState();
+      // Models load lazily per selected instrument at run time — nothing
+      // downloads on upload anymore. Release anything the previous photo's
+      // run left resident before swapping managers: dropping the manager
+      // alone would orphan the native sessions (ort WASM heap, MediaPipe
+      // graphs) without calling their release/close.
+      if (modelMgr) { try { await modelMgr.releaseAll(); } catch (e) {} }
+      modelMgr = buildModelManager();
+      await idbDel('current'); // a new photo invalidates any old resume record
+      drawPreview();
+      $('runstate').textContent = 'photo ready — pick instruments and run.';
+      setBar(0);
     } catch (e) {
       $('runstate').innerHTML = '<span class="err">' + esc(e.message || e) + '</span>';
     }
   }
 
-  async function run() {
-    if (!photo || !detectReady) return;
-    $('run').disabled = true;
-    const wantAge = $('tAge').checked && faces.length > 0;
-    const wantTele = $('tTele').checked && faces.length > 0;
-    const wantBody = $('tBody').checked;
-    const wantBust = $('tBust').checked;
-    const rep = {
-      generated_at: new Date().toISOString(),
-      tool: 'workbench',
-      faces_detected: faces.length,
-      subject_a: faceA,
-      instruments: {},
-    };
-    let html = '';
+  // Per-photo analysis state. Called on new photo; faces stay empty until
+  // the run's detection step fills them.
+  function resetPhotoState() {
+    faces = []; faceA = 0;
+    poseRaw = null; poseTried = false;
+    silCache = null; silTried = false;
+    anchorCache = {};
+    lastBodyResult = null;
+    bodyView = 'skeleton'; syncBodyViewCtl();
+    $('facecard').classList.add('hidden');
+    $('runcard').classList.add('hidden');
+  }
+
+  /* ---------------- crash resume (IndexedDB) ---------------- */
+  // The run persists the photo (downscaled JPEG), the selection, and each
+  // finished instrument's card as it goes. If iOS jetsams the tab mid-run,
+  // the next page load offers a one-tap resume: finished cards are restored
+  // and only the remaining instruments run.
+  const IDB_NAME = 'workbench', IDB_STORE = 'runs';
+  let idb = null;
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      if (idb) return resolve(idb);
+      try {
+        const req = indexedDB.open(IDB_NAME, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+        req.onsuccess = () => { idb = req.result; resolve(idb); };
+        req.onerror = () => reject(req.error);
+      } catch (e) { reject(e); }
+    });
+  }
+  function idbPut(key, val) {
+    return openDb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    }));
+  }
+  function idbGet(key) {
+    return openDb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const rq = tx.objectStore(IDB_STORE).get(key);
+      rq.onsuccess = () => resolve(rq.result);
+      rq.onerror = () => reject(rq.error);
+    }));
+  }
+  function idbDel(key) {
+    return idbPut(key, null).then(() => openDb().then(db => new Promise(resolve => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve(); // best-effort
+    }))).catch(() => {});
+  }
+
+  // Downscaled JPEG of the working photo for the resume record.
+  function photoJpeg(maxEdge) {
+    const full = document.createElement('canvas');
+    full.width = photo.w; full.height = photo.h;
+    const fctx = full.getContext('2d');
+    const img = fctx.createImageData(photo.w, photo.h);
+    for (let i = 0, j = 0; i < photo.rgb.length; i += 3, j += 4) {
+      img.data[j] = photo.rgb[i]; img.data[j + 1] = photo.rgb[i + 1];
+      img.data[j + 2] = photo.rgb[i + 2]; img.data[j + 3] = 255;
+    }
+    fctx.putImageData(img, 0, 0);
+    const sc = Math.min(1, maxEdge / Math.max(photo.w, photo.h));
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(photo.w * sc));
+    cv.height = Math.max(1, Math.round(photo.h * sc));
+    cv.getContext('2d').drawImage(full, 0, 0, cv.width, cv.height);
+    return cv.toDataURL('image/jpeg', 0.85);
+  }
+
+  // Live run state. done/order/html drive both the visible report and the
+  // resume record; rep accumulates the export JSON.
+  let runState = null;
+  const REP_KEY = { age: 'age', tele: 'telemetry', body: 'body_telemetry', bust: 'breast_telemetry' };
+
+  async function persist() {
+    if (!runState || !photo) return;
     try {
-      // embeddings first: feeds the face card's 2nd-opinion age
-      let emb = null;
-      if (wantAge) {
-        $('runstate').textContent = 'extracting face embedding…';
-        emb = await embeddingFor(faceA);
-        rep.face_a_attributes = { sex: emb.sex, genderage_age: emb.age, detection_score: +faces[faceA].score.toFixed(4) };
+      await idbPut('current', {
+        v: 1,
+        photoJpeg: photoJpeg(1024), photoName,
+        instruments: runState.sel, faceA,
+        faces: sanitizeFaces(faces),
+        done: [...runState.done], order: runState.order, html: runState.html,
+        rep: runState.rep, telePng: window.__wbTelePng || null,
+        startedAt: runState.startedAt, savedAt: Date.now(),
+      });
+    } catch (e) { /* resume is best-effort; never break the run */ }
+  }
+
+  // Record one finished instrument: append its card in run order, persist.
+  function completeInstrument(key, cardHtml, repValue) {
+    runState.html[key] = cardHtml;
+    runState.order.push(key);
+    runState.rep.instruments[REP_KEY[key]] = repValue;
+    if (key === 'body' && repValue && !repValue.error) lastBodyResult = repValue;
+    $('report').innerHTML = orderReportHtml(runState.order, runState.html);
+  }
+
+  /* ---------------- run ---------------- */
+
+  async function runInstrument(inst) {
+    if (inst === 'age') {
+      $('runstate').textContent = 'running age estimation…';
+      const attr = await attrFor(faceA); // genderage 2nd opinion; null on failure
+      if (attr) runState.rep.face_a_attributes = {
+        sex: attr.gender, genderage_age: attr.age,
+        detection_score: +faces[faceA].score.toFixed(4),
+      };
+      const r = await instrumentAge(faceA);
+      completeInstrument('age', renderAge(r, attr && { age: attr.age, sex: attr.gender }, faceA), r);
+    } else if (inst === 'tele') {
+      $('runstate').textContent = 'running facial telemetry…';
+      try {
+        const r = await instrumentTelemetry(faceA);
+        completeInstrument('tele', renderTelemetry(r, faceA), r);
+      } catch (e) {
+        completeInstrument('tele',
+          card('facial telemetry', '<p class="note err">telemetry failed: ' + esc(e.message || e) + '</p>'),
+          { error: String(e.message || e) });
       }
-      if (wantAge) {
-        $('runstate').textContent = 'running age estimation…';
-        const r = await instrumentAge(faceA);
-        rep.instruments.age = r;
-        html += renderAge(r, emb, faceA);
-        $('report').innerHTML = html;
+    } else if (inst === 'body') {
+      $('runstate').textContent = 'running body telemetry…';
+      try {
+        const r = await instrumentBody();
+        completeInstrument('body',
+          renderBody(r, RATIO_KEYS, ratioLabel) + renderAnchor(r) + renderSilhouette(r), r);
+      } catch (e) {
+        completeInstrument('body',
+          card('body telemetry', '<p class="note err">body telemetry failed: ' + esc(e.message || e) + '</p>'),
+          { error: String(e.message || e) });
       }
-      if (wantTele) {
-        $('runstate').textContent = 'running facial telemetry…';
+    } else if (inst === 'bust') {
+      $('runstate').textContent = 'running breast telemetry…';
+      try {
+        const r = await instrumentBreast(photoName);
+        completeInstrument('bust', renderBreast(r, photo ? photo.img : null), r);
+      } catch (e) {
+        completeInstrument('bust',
+          card('breast telemetry', '<p class="note err">breast telemetry failed: ' + esc(e.message || e) + '</p>'),
+          { error: String(e.message || e) });
+      }
+    }
+  }
+
+  async function run() {
+    if (!photo) return;
+    hideResumeCard();
+    await runPlan(null);
+  }
+
+  // saved: null for a fresh run, or the IDB record when resuming.
+  async function runPlan(saved) {
+    $('run').disabled = true;
+    const sel = saved ? saved.instruments : {
+      age: $('tAge').checked, tele: $('tTele').checked,
+      body: $('tBody').checked, bust: $('tBust').checked,
+    };
+    if (!saved) {
+      runState = {
+        sel, done: new Set(), order: [], html: {},
+        rep: {
+          generated_at: new Date().toISOString(),
+          tool: 'workbench',
+          faces_detected: faces.length,
+          subject_a: faceA,
+          instruments: {},
+        },
+        startedAt: Date.now(),
+      };
+      $('report').innerHTML = '';
+      setBar(0);
+    }
+    try {
+      // Face detection, only when a selected instrument needs faces. The
+      // model releases immediately after — faces are plain data from here.
+      // Body-only runs skip detection entirely.
+      if ((sel.age || sel.tele || sel.bust) && !faces.length) {
+        $('runstate').textContent = 'loading face detection…';
+        await modelMgr.ensure('det');
         try {
-          const r = await instrumentTelemetry(faceA);
-          rep.instruments.telemetry = r;
-          html += renderTelemetry(r, faceA);
-        } catch (e) {
-          html += card('facial telemetry', '<p class="note err">telemetry failed: ' + esc(e.message || e) + '</p>');
-          rep.instruments.telemetry = { error: String(e.message || e) };
+          const dh = detH();
+          faces = await P.detectFaces(dh.session, dh.names, photo.rgb, photo.w, photo.h);
+          faceA = 0;
+          runState.rep.faces_detected = faces.length;
+          $('facecard').classList.remove('hidden');
+          renderChips(); drawPreview();
+        } finally {
+          await modelMgr.release('det');
         }
-        $('report').innerHTML = html;
+        await persist();
       }
-      if (wantBody) {
-        $('runstate').textContent = 'running body telemetry…';
-        try {
-          const r = await instrumentBody();
-          rep.instruments.body_telemetry = r;
-          lastBodyResult = r; // the outline toggle patches this in place
-          html += renderBody(r, RATIO_KEYS, ratioLabel);
-          html += renderAnchor(r);
-          html += renderSilhouette(r);
-        } catch (e) {
-          html += card('body telemetry', '<p class="note err">body telemetry failed: ' + esc(e.message || e) + '</p>');
-          rep.instruments.body_telemetry = { error: String(e.message || e) };
-        }
-        $('report').innerHTML = html;
+      if (!faces.length && !sel.body && !sel.bust) {
+        $('runstate').textContent = 'no face detected in this photo';
+        await idbDel('current');
+        return;
       }
-      if (wantBust) {
-        try {
-          const r = await instrumentBreast(photoName);
-          rep.instruments.breast_telemetry = r;
-          html += renderBreast(r, photo ? photo.img : null);
-        } catch (e) {
-          html += card('breast telemetry', '<p class="note err">breast telemetry failed: ' + esc(e.message || e) + '</p>');
-          rep.instruments.breast_telemetry = { error: String(e.message || e) };
-        }
-        $('report').innerHTML = html;
-      }
-      lastReport = rep;
-      window.__wbLastReport = rep; // shared with import.js (export after import)
+      $('runcard').classList.remove('hidden');
+      if (faces.length) { renderChips(); drawPreview(); }
+      // Age/telemetry need a detected face; body/breast don't.
+      const effSel = {
+        age: sel.age && faces.length > 0, tele: sel.tele && faces.length > 0,
+        body: sel.body, bust: sel.bust,
+      };
+      const plan = planLifecycle(effSel);
+      const total = plan.steps.filter(s => !runState.done.has(s.instrument)).length;
+      const denom = runState.done.size + total; // fixed: completed + remaining
+      const tick = () => setBar(denom ? runState.done.size / denom : 1,
+        runState.done.size + '/' + denom + ' instruments');
+      tick();
+      $('runstate').textContent = faces.length
+        ? faces.length + ' face' + (faces.length > 1 ? 's' : '') + ' detected — running…'
+        : 'body-only mode — running…';
+      await runPlannedSteps(plan, runState.done, {
+        ensure: m => modelMgr.ensure(m),
+        release: m => modelMgr.release(m),
+        runInstrument,
+        onInstrumentDone: async () => { tick(); await persist(); },
+      });
+      // Finished: publish the report, drop the resume record.
+      lastReport = runState.rep;
+      window.__wbLastReport = runState.rep; // shared with import.js (export after import)
       hasRun = true;
       if (poseRaw || silCache) drawPreview(); // overlay the body figure(s) on the preview
       $('exportcard').classList.remove('hidden');
       const dlp = $('dltelepng');
       if (dlp) dlp.style.display = window.__wbTelePng ? '' : 'none';
       $('runstate').textContent = 'done.';
+      setBar(1, 'done — everything runs on your device');
+      await idbDel('current');
+      runState = null;
     } catch (e) {
       $('runstate').innerHTML = '<span class="err">run failed: ' + esc(e.message || e) + '</span>';
       console.error(e);
+      await persist(); // leave the resume record behind for the next load
     }
     $('run').disabled = false;
+  }
+
+  /* ---------------- resume ---------------- */
+
+  function hideResumeCard() { $('resumecard').classList.add('hidden'); }
+
+  async function checkResume() {
+    let rec = null;
+    try { rec = await idbGet('current'); } catch (e) { return; }
+    if (!rec || !rec.photoJpeg) return;
+    const rem = remainingInstruments(rec.instruments || {}, rec.done || []);
+    if (!rem.length) { idbDel('current'); return; } // completed run; stale record
+    $('resumemsg').textContent = describeResume(rec);
+    $('resumecard').classList.remove('hidden');
+    $('resumeyes').onclick = () => resumeRun(rec);
+    $('resumeno').onclick = async () => { await idbDel('current'); hideResumeCard(); };
+  }
+
+  async function resumeRun(rec) {
+    hideResumeCard();
+    $('runstate').textContent = 'restoring interrupted run…';
+    try {
+      photo = await photoFromDataUrl(rec.photoJpeg);
+      photoName = rec.photoName || 'upload';
+      resetPhotoState();
+      if (modelMgr) { try { await modelMgr.releaseAll(); } catch (e) {} }
+      modelMgr = buildModelManager();
+      // Restore the selection checkboxes to the interrupted run's.
+      $('tAge').checked = !!rec.instruments.age;
+      $('tTele').checked = !!rec.instruments.tele;
+      $('tBody').checked = !!rec.instruments.body;
+      $('tBust').checked = !!rec.instruments.bust;
+      faces = rec.faces || [];
+      faceA = rec.faceA || 0;
+      runState = {
+        sel: rec.instruments, done: new Set(rec.done || []),
+        order: rec.order || [], html: rec.html || {},
+        rep: rec.rep, startedAt: rec.startedAt || Date.now(),
+      };
+      if (rec.telePng) window.__wbTelePng = rec.telePng;
+      const bodyRep = runState.rep.instruments && runState.rep.instruments.body_telemetry;
+      if (bodyRep && !bodyRep.error) lastBodyResult = bodyRep;
+      $('facecard').classList.remove('hidden');
+      $('report').innerHTML = orderReportHtml(runState.order, runState.html);
+      drawPreview();
+      hasRun = true;
+      await runPlan(rec);
+    } catch (e) {
+      $('runstate').innerHTML = '<span class="err">could not resume: ' + esc(e.message || e) + '</span>';
+      await idbDel('current');
+    }
   }
 
   /* ---------------- export ---------------- */
@@ -836,6 +1101,9 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
           }
           $('runstate').textContent = 'outline unavailable on this device — skeleton only.';
         }
+        // The toggle's inference is done and its result is cached — release
+        // the segmentation model; it is outside every run plan.
+        try { await modelMgr.release('seg'); } catch (e) {}
       }
       if (photo) drawPreview();
     };
@@ -883,5 +1151,11 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   });
 
   setBar(0, 'warming up…');
+  // The model manager is the only owner of model sessions. It starts empty:
+  // nothing downloads until a run's plan loads what the selected instruments
+  // need. A previous tab-death leaves a resume record in IndexedDB — offer
+  // the one-tap resume.
+  modelMgr = buildModelManager();
+  checkResume();
   window.__wbAppBooted = true; // lets import.js know the photo pipeline is alive
 })();
