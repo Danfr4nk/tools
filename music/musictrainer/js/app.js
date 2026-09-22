@@ -10,10 +10,15 @@ let selIdx = 0;
 function load(){
   try{
     const raw = localStorage.getItem(LS_KEY);
-    if(raw){ const s = JSON.parse(raw); if(s && Array.isArray(s.weeks)) return s; }
+    if(raw){ const s = JSON.parse(raw); if(s && Array.isArray(s.weeks)) return mergeSeeds(s); }
   }catch(e){}
-  const s = { weeks: [] };
-  if(window.SEED_WEEK) s.weeks.push(structuredClone(window.SEED_WEEK));
+  return mergeSeeds({ weeks: [] });
+}
+function mergeSeeds(s){
+  const seeds = window.SEED_WEEKS || (window.SEED_WEEK ? [window.SEED_WEEK] : []);
+  for(const sw of seeds){
+    if(sw && sw.id && !s.weeks.some(w=>w.id===sw.id)) s.weeks.push(structuredClone(sw));
+  }
   return s;
 }
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
@@ -192,7 +197,8 @@ function renderWeek(){
         ? `<span class="badge locked">🔒 locked ${esc(w.lockedAt||"")}</span>`
         : `<span class="badge unlocked">predictions unlocked</span>`}
     </div>
-    <div class="sub">${w.tracks.length} tracks · type your score 1.00–10.00 · <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">1</span> hate · <span class="kbd">2</span> like · <span class="kbd">3</span> playlist · <span class="kbd">p</span> player</div>`;
+    <div class="sub">${w.tracks.length} tracks · type your score 1.00–10.00 · <span class="kbd">j</span>/<span class="kbd">k</span> move · <span class="kbd">1</span> hate · <span class="kbd">2</span> like · <span class="kbd">3</span> playlist · <span class="kbd">p</span> player</div>
+    ${w.listenUrl?`<div class="sub">▶ listening playlist: <a href="${esc(w.listenUrl)}" target="_blank" rel="noopener">open in Spotify</a></div>`:""}`;
 
   h += `<div id="scorebar"><div class="row spread">
       <div class="statgrid" style="margin:0;flex:1;min-width:260px">

@@ -4,14 +4,14 @@
  * The detected faces fan out to:
  *   - age estimation  (ViT bracket classifier via transformers.js)
  *   - facial telemetry (MediaPipe FaceLandmarker, same 17-ratio vector as the lab)
+ *   - kinship        (ArcFace embeddings, A vs B)
  * Everything runs on-device. Nothing is uploaded.
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
-import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920f';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920f';
-import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920f';
-import { ensureSegmenter, segmentPerson, extractContour, smoothContour, silhouetteMetrics, drawOutline, silhouetteLabel } from '../attraction/js/silhouette.js?v=20260921a';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920b';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship, renderBody } from './render.js?v=20260920b';
+import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920b';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
 (function () {
@@ -37,21 +37,18 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
   /* ---------------- state ---------------- */
 
-  let kSessions = null, kNames = null, detectReady = false;
+  let kSessions = null, kNames = null, kinshipReady = false;
   let ageClassifier = null, ageReady = false;
   let teleReady = false;
 
   let photo = null;          // {rgb, w, h, img}
   let photoName = 'upload';
   let faces = [];            // SCRFD faces, largest-first
-  let faceA = 0;
+  let faceA = 0, faceB = 1;
   let embedCache = {};       // faceIndex -> embedFace result
   let lastReport = null;
   let hasRun = false;
   let poseRaw = null, poseTried = false; // per-photo MediaPipe pose landmarks (33, normalized)
-  let silCache = null, silTried = false; // per-photo segmentation: {mask, w, h, contour} (mask coords)
-  let bodyView = 'skeleton'; // preview overlay mode: outline | skeleton | both
-  let lastBodyResult = null; // body-telemetry result, for the lazy outline toggle
 
   /* ---------------- model loading ---------------- */
 
@@ -113,8 +110,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
   // Stage 1 (upload): det + gender/age only — both local, ~18MB, fast.
   // The 174MB HuggingFace recognition model loads lazily via ensureRec(),
-  // only when the age instrument's 2nd-opinion embedding is actually
-  // requested. Eagerly fetching it blocked every upload on it.
+  // only when an instrument actually needs a face embedding (age 2nd
+  // opinion, kinship). Eagerly fetching it blocked every upload on it.
   async function loadDetect(onp) {
     const total = KIN_SIZES.det + KIN_SIZES.ga;
     let done = 0;
@@ -133,13 +130,12 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       detIn: det.inputNames[0], detOut: det.outputNames,
       gaIn: ga.inputNames[0], gaOut: ga.outputNames[0],
     };
-    detectReady = true;
+    kinshipReady = true;
   }
 
   // Stage 2 (lazy): the remote recognition model. Single shared promise so
   // concurrent embedding requests don't double-download; resets on failure
-  // so a stall error is retryable. Only fetched when the age instrument's
-  // 2nd-opinion embedding is actually requested.
+  // so a stall error is retryable.
   let recPromise = null;
   function ensureRec(onp) {
     if (kSessions.rec) return Promise.resolve();
@@ -312,12 +308,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     $('runstate').textContent = 'running breast telemetry…';
     // faces feed the nipple-seed plausibility veto (seeds inside a face box
     // are rejected as non-anatomical); body-only mode passes [].
-    // Pose is fetched first now: the nipple-side arm polyline becomes a wall
-    // the mound flood cannot cross (stops the arm-leak scribbles), and the
-    // same landmarks feed the cross-check below.
-    const pose = await ensurePoseRaw();
     const rep = measureBreastTelemetry(photo.rgb, photo.w, photo.h, fileName,
-      faces.map(f => f.bbox), pose);
+      faces.map(f => f.bbox));
     if (!rep) throw new Error('breast telemetry: could not resolve nipple/areola/nail landmarks in this photo');
     const v = validateBreastTelemetry(rep);
     if (!v.ok) throw new Error('breast telemetry schema invalid: ' + v.errors.join('; '));
@@ -326,6 +318,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     // band, clear of the hands. Runs even when the body instrument is off;
     // it is part of breast validation now, not a separate card. A hard
     // failure refuses the read outright: no "firm" verdict on a hand-lock.
+    const pose = await ensurePoseRaw();
     if (pose) {
       $('runstate').textContent = 'cross-checking breast landmarks against body pose…';
       const chk = poseCrossCheck(rep, pose, photo.w, photo.h);
@@ -351,77 +344,30 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     return poseRaw;
   }
 
-  // Body-outline segmentation, cached per photo. Null on any failure — the
-  // tool works fine with the outline unavailable (skeleton-only fallback).
-  // Stored artifact is the 256x256 mask (65KB) + smoothed contour in mask
-  // coords; scaled to photo coords only at draw time.
-  async function ensureSilhouetteRaw() {
-    if (silTried) return silCache;
-    silTried = true;
-    try {
-      const seg = await ensureSegmenter(m => { $('runstate').textContent = m; });
-      if (!seg) return null;
-      // Downscale first: the model is 256x256 internally, so feeding a 12MP
-      // iPhone photo straight into the GPU delegate just burns memory — on
-      // iOS that got the tab Jetsam-killed (~20s in, silent reload).
-      const MAXD = 768, dsc = Math.min(1, MAXD / Math.max(photo.img.width, photo.img.height));
-      const dc = document.createElement('canvas');
-      dc.width = Math.max(1, Math.round(photo.img.width * dsc));
-      dc.height = Math.max(1, Math.round(photo.img.height * dsc));
-      dc.getContext('2d').drawImage(photo.img, 0, 0, dc.width, dc.height);
-      const out = await segmentPerson(dc, seg);
-      if (!out || !out.mask || !out.mask.some(v => v)) return null;
-      const loop = extractContour(out.mask, out.w, out.h);
-      silCache = {
-        mask: out.mask, w: out.w, h: out.h,
-        contour: loop.length > 8 ? smoothContour(loop, 3) : null,
-      };
-    } catch (e) { silCache = null; }
-    return silCache;
-  }
-
-  // Annotated body export PNG (photo + skeleton and/or outline), downscaled.
-  // Rebuilt when the outline finishes lazy-loading so the export matches the view.
-  function buildBodyExportPng() {
+  async function instrumentBody() {
+    $('runstate').textContent = 'estimating body pose…';
+    const raw = await ensurePoseRaw();
+    if (!raw) return { error: 'no pose detected in this photo' };
+    // Strict full-body ratios (the body-metrics lab path: needs
+    // shoulders-through-ankles); the stick figure draws from raw regardless.
+    let strict = null;
+    try { strict = await measureBodyImage(photo.img); }
+    catch (e) { strict = { ok: false, skip_reason: String((e && e.message) || e) }; }
     const full = document.createElement('canvas');
-    drawSkeleton(full, photo.img, poseRaw); // photo alone when no pose
-    const sil = silCache;
-    if (sil && sil.contour)
-      drawOutline(full.getContext('2d'), sil.contour, photo.w, photo.h,
-        { stroke: 'rgba(125,211,252,0.95)', width: Math.max(2, photo.w / 300) });
+    drawSkeleton(full, photo.img, raw);
     const MAXS = 900, sc = Math.min(1, MAXS / Math.max(full.width, full.height));
     const cv = document.createElement('canvas');
     cv.width = Math.max(1, Math.round(full.width * sc));
     cv.height = Math.max(1, Math.round(full.height * sc));
     cv.getContext('2d').drawImage(full, 0, 0, cv.width, cv.height);
-    return cv.toDataURL('image/png');
-  }
-
-  async function instrumentBody() {
-    $('runstate').textContent = 'estimating body pose…';
-    const raw = await ensurePoseRaw();
-    // The outline is opt-in via the toggle below: loading the segmentation
-    // model during the instrument run got iOS Safari Jetsam-killed (~20s in,
-    // tab silently reloaded). The default path stays exactly as heavy as
-    // before the outline existed; tapping outline/both loads it on demand.
-    if (!raw) return { error: 'no pose detected in this photo' };
-    // Strict full-body ratios (the body-metrics lab path: needs
-    // shoulders-through-ankles); the stick figure draws from raw regardless.
-    let strict = null;
-    try { strict = raw ? await measureBodyImage(photo.img) : { ok: false, skip_reason: 'no pose landmarks' }; }
-    catch (e) { strict = { ok: false, skip_reason: String((e && e.message) || e) }; }
     return {
-      pose_png_dataurl: buildBodyExportPng(),
-      has_outline: false, // filled in if the user loads the outline via the toggle
-      has_skeleton: !!raw,
+      pose_png_dataurl: cv.toDataURL('image/png'),
       ratios: strict.ok ? strict.ratios : null,
       visibility: strict.visibility || null,
       warnings: strict.warnings || [],
       skip_reason: strict.ok ? null : (strict.skip_reason || 'pose incomplete'),
-      silhouette: null, // lazy: populated by the outline toggle, not the run
-      silhouette_error: 'pending',
       model: 'MediaPipe PoseLandmarker (pose_landmarker_lite, float16)',
-      method: '33 landmarks → 9 segment lengths + 7 scale-invariant ratios (same definitions as the body-metrics lab); body outline = largest person-segment contour at 256px, loaded on demand',
+      method: '33 landmarks → 9 segment lengths + 7 scale-invariant ratios, same definitions as the body-metrics lab',
     };
   }
 
@@ -435,6 +381,26 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       embedCache[idx] = await P.embedFace(kSessions, kNames, photo.rgb, photo.w, photo.h, faces[idx]);
     }
     return embedCache[idx];
+  }
+
+  async function instrumentKinship() {
+    if (faces.length < 2) return { skipped: 'needs two faces in the photo' };
+    if (faceA === faceB) return { skipped: 'A and B are the same face' };
+    const ea = await embeddingFor(faceA);
+    const eb = await embeddingFor(faceB);
+    const a = { embedding: ea.embedding, sex: ea.sex, age: ea.age, faces, faceIndex: faceA };
+    const b = { embedding: eb.embedding, sex: eb.sex, age: eb.age, faces, faceIndex: faceB };
+    const cmp = P.compareResults(a, b);
+    return {
+      face_a: faceA, face_b: faceB,
+      cosine_similarity: cmp.cosine_similarity,
+      kinship_confidence: cmp.kinship_confidence,
+      verdict: cmp.verdict,
+      verdict_note: cmp.verdict_note,
+      caveats: cmp.caveats,
+      predicted: { a: { sex: ea.sex, age: ea.age }, b: { sex: eb.sex, age: eb.age } },
+      calibration: cmp.calibration,
+    };
   }
 
   /* ---------------- rendering ---------------- */
@@ -458,22 +424,15 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     ctx.lineWidth = 2;
     faces.forEach((f, i) => {
       const [x1, y1, x2, y2] = f.bbox;
-      ctx.strokeStyle = i === faceA ? '#7dd3fc' : 'rgba(125,211,252,.35)';
+      ctx.strokeStyle = i === faceA ? '#7dd3fc' : (i === faceB ? '#a78bfa' : 'rgba(125,211,252,.35)');
       ctx.strokeRect(x1 * scale, y1 * scale, (x2 - x1) * scale, (y2 - y1) * scale);
-      ctx.fillStyle = i === faceA ? '#7dd3fc' : 'rgba(125,211,252,.6)';
+      ctx.fillStyle = i === faceA ? '#7dd3fc' : (i === faceB ? '#a78bfa' : 'rgba(125,211,252,.6)');
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(i === faceA ? 'A' : String(i + 1),
+      ctx.fillText(i === faceA ? 'A' : (i === faceB ? 'B' : String(i + 1)),
         x1 * scale + 4, y1 * scale + 16);
     });
-    // body overlay: outline / skeleton / both (skeleton is the default; the
-    // outline appears once the user loads it via the toggle)
-    const hasOutline = !!(silCache && silCache.contour);
-    let mode = bodyView;
-    if (mode === 'outline' && !hasOutline) mode = poseRaw ? 'skeleton' : 'none';
-    if (mode === 'skeleton' && !poseRaw) mode = hasOutline ? 'outline' : 'none';
-    if (mode === 'both' && !poseRaw) mode = 'outline';
-    if (mode === 'both' && !hasOutline) mode = 'skeleton';
-    if (mode === 'skeleton' || mode === 'both') {
+    // pose stick figure, when a run produced one
+    if (poseRaw) {
       ctx.strokeStyle = 'rgba(74,222,128,.85)';
       ctx.fillStyle = 'rgba(74,222,128,.9)';
       ctx.lineWidth = 2; ctx.lineCap = 'round';
@@ -493,48 +452,6 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
         ctx.fill();
       }
     }
-    if (mode === 'outline' || mode === 'both') {
-      drawOutline(ctx, silCache.contour, cv.width, cv.height,
-        { stroke: 'rgba(125,211,252,0.9)', width: 2 });
-    }
-    // the outline/skeleton toggle only means something once one of them exists
-    const bvr = $('bodyViewRow');
-    if (bvr) bvr.style.display = (poseRaw || hasOutline) ? '' : 'none';
-  }
-
-  // Silhouette metrics card — appended after renderBody's card. Widths are
-  // mask px (256px mask); ratios are the comparable unit across photos.
-  function renderSilhouette(r) {
-    let inner;
-    if (!r || r.error) inner = '';
-    else if (r.silhouette) {
-      const s = r.silhouette;
-      const row = (k, v) => '<tr><td>' + esc(silhouetteLabel(k)) +
-        ' <span class="note">' + esc(k) + '</span></td><td>' + esc(v) + '</td></tr>';
-      const f = (v) => (typeof v === 'number' ? v.toFixed(3) : '—');
-      let h = '<div class="kpi">' +
-        '<div><div class="v">' + f(s.shoulder_waist) + '</div><div class="l">shoulder ÷ waist</div></div>' +
-        '<div><div class="v">' + f(s.waist_hip) + '</div><div class="l">waist ÷ hip</div></div>' +
-        '<div><div class="v">' + f(s.hip_shoulder) + '</div><div class="l">hip ÷ shoulder</div></div>' +
-        '<div><div class="v">' + (typeof s.area_fraction === 'number' ? (s.area_fraction * 100).toFixed(1) + '%' : '—') +
-        '</div><div class="l">frame covered</div></div></div>';
-      h += '<table class="metrics">' +
-        row('shoulder_width', s.shoulder_width + ' px @ row ' + s.rows.shoulder) +
-        row('waist_width', s.waist_width + ' px @ row ' + s.rows.waist) +
-        row('hip_width', s.hip_width + ' px @ row ' + s.rows.hip) +
-        row('area_fraction', f(s.area_fraction)) +
-        row('bbox_height_fraction', f(s.bbox_height_fraction)) +
-        '</table>';
-      h += '<p class="note">clothed-silhouette measurements — the outline traces clothing and hair, ' +
-        'not the body underneath; the ratios are the comparable unit. ' + esc(s.model || '') + '.</p>';
-      inner = card('body silhouette', h);
-    }
-    else if (r.silhouette_error === 'pending')
-      inner = card('body silhouette',
-        '<p class="note">outline not loaded — tap <b>outline</b> above the preview to trace it (the segmentation model loads on demand).</p>');
-    else inner = card('body silhouette',
-      '<p class="note">segmentation unavailable for this photo — skeleton only.</p>');
-    return '<div id="silcard">' + inner + '</div>';
   }
 
   function renderChips() {
@@ -543,14 +460,35 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     faces.forEach((f, i) => {
       const b = document.createElement('button');
       b.className = 'chip' + (i === faceA ? ' on' : '');
-      b.textContent = 'face ' + (i + 1) + ' (' + f.score.toFixed(2) + ')';
+      b.textContent = 'face ' + (i + 1) + ' (' + f.score.toFixed(2) + ')' + (i === faceB ? ' · B' : '');
       b.onclick = () => {
         faceA = i;
-        renderChips(); drawPreview();
+        if (faceB === faceA) faceB = (faceA + 1) % faces.length;
+        syncBSelect(); renderChips(); drawPreview();
         if (hasRun) run();
       };
       box.appendChild(b);
     });
+    const kp = $('kinshipPick');
+    if (faces.length >= 2) {
+      kp.classList.remove('hidden');
+      syncBSelect();
+    } else kp.classList.add('hidden');
+  }
+
+  function syncBSelect() {
+    const sel = $('faceB');
+    sel.innerHTML = '';
+    faces.forEach((f, i) => {
+      if (i === faceA) return;
+      const o = document.createElement('option');
+      o.value = i; o.textContent = 'face ' + (i + 1) + ' (' + f.score.toFixed(2) + ')';
+      if (i === faceB) o.selected = true;
+      sel.appendChild(o);
+    });
+    if (![...sel.options].some(o => +o.value === faceB))
+      faceB = sel.options.length ? +sel.options[0].value : 0;
+    sel.value = faceB;
   }
 
   /* ---------------- main flow ---------------- */
@@ -580,12 +518,9 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     try {
       photo = await readPhoto(file);
       photoName = (file && file.name) || 'upload';
-      faces = []; embedCache = {}; faceA = 0;
+      faces = []; embedCache = {}; faceA = 0; faceB = 1;
       poseRaw = null; poseTried = false; // fresh pose per photo
-      silCache = null; silTried = false; // fresh silhouette per photo
-      lastBodyResult = null;
-      bodyView = 'skeleton'; syncBodyViewCtl();
-      if (!detectReady) {
+      if (!kinshipReady) {
         setBar(0, 'loading detection models…');
         await loadDetect(pct => setBar(pct, 'loading detection models… ' + (pct * 100).toFixed(0) + '%'));
         setBar(1, 'detection models ready — everything runs on your device');
@@ -597,7 +532,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
         $('runstate').textContent = 'no face detected in this photo';
         return;
       }
-      faceA = 0;
+      faceA = 0; faceB = faces.length > 1 ? 1 : 0;
       $('facecard').classList.remove('hidden');
       $('runcard').classList.remove('hidden');
       renderChips(); drawPreview();
@@ -609,10 +544,11 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   }
 
   async function run() {
-    if (!photo || !detectReady) return;
+    if (!photo || !kinshipReady) return;
     $('run').disabled = true;
     const wantAge = $('tAge').checked && faces.length > 0;
     const wantTele = $('tTele').checked && faces.length > 0;
+    const wantKin = $('tKin').checked && faces.length > 1;
     const wantBody = $('tBody').checked;
     const wantBust = $('tBust').checked;
     const rep = {
@@ -624,9 +560,9 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     };
     let html = '';
     try {
-      // embeddings first: feeds the face card's 2nd-opinion age
+      // embeddings first: feeds the face card's 2nd-opinion age and kinship
       let emb = null;
-      if (wantAge) {
+      if (wantAge || wantKin) {
         $('runstate').textContent = 'extracting face embedding…';
         emb = await embeddingFor(faceA);
         rep.face_a_attributes = { sex: emb.sex, genderage_age: emb.age, detection_score: +faces[faceA].score.toFixed(4) };
@@ -650,14 +586,19 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
         }
         $('report').innerHTML = html;
       }
+      if (wantKin) {
+        $('runstate').textContent = 'running kinship comparison…';
+        const r = await instrumentKinship();
+        rep.instruments.kinship = r;
+        html += renderKinship(r);
+        $('report').innerHTML = html;
+      }
       if (wantBody) {
         $('runstate').textContent = 'running body telemetry…';
         try {
           const r = await instrumentBody();
           rep.instruments.body_telemetry = r;
-          lastBodyResult = r; // the outline toggle patches this in place
           html += renderBody(r, RATIO_KEYS, ratioLabel);
-          html += renderSilhouette(r);
         } catch (e) {
           html += card('body telemetry', '<p class="note err">body telemetry failed: ' + esc(e.message || e) + '</p>');
           rep.instruments.body_telemetry = { error: String(e.message || e) };
@@ -678,7 +619,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       lastReport = rep;
       window.__wbLastReport = rep; // shared with import.js (export after import)
       hasRun = true;
-      if (poseRaw || silCache) drawPreview(); // overlay the body figure(s) on the preview
+      if (poseRaw) drawPreview(); // overlay the stick figure on the preview
       $('exportcard').classList.remove('hidden');
       const dlp = $('dltelepng');
       if (dlp) dlp.style.display = window.__wbTelePng ? '' : 'none';
@@ -718,42 +659,11 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     if (item) handleFile(item.getAsFile());
   });
   $('run').onclick = run;
-  // body overlay segmented control (outline / skeleton / both)
-  function syncBodyViewCtl() {
-    document.querySelectorAll('#bodyViewCtl .chip').forEach(b =>
-      b.classList.toggle('on', b.dataset.v === bodyView));
-  }
-  document.querySelectorAll('#bodyViewCtl .chip').forEach(b => {
-    b.onclick = async () => {
-      bodyView = b.dataset.v; syncBodyViewCtl();
-      // Outline loads on demand: the segmentation model + a full-res GPU
-      // inference is what got iOS Safari Jetsam-killed during the run.
-      if ((bodyView === 'outline' || bodyView === 'both') && !silTried && photo) {
-        $('runstate').textContent = 'loading segmentation model…';
-        let sil = null;
-        try { sil = await ensureSilhouetteRaw(); } catch (e) { sil = null; }
-        if (sil && sil.contour && lastBodyResult) {
-          lastBodyResult.silhouette = silhouetteMetrics(sil.mask, sil.w, sil.h, poseRaw);
-          lastBodyResult.silhouette_error = null;
-          lastBodyResult.has_outline = true;
-          lastBodyResult.model += ' + ImageSegmenter (selfie_multiclass_256x256)';
-          try { lastBodyResult.pose_png_dataurl = buildBodyExportPng(); } catch (e) {}
-          const sc = $('silcard');
-          if (sc) sc.outerHTML = renderSilhouette(lastBodyResult);
-          $('runstate').textContent = 'done.';
-        } else {
-          if (lastBodyResult) {
-            lastBodyResult.silhouette_error = 'unavailable';
-            const sc = $('silcard');
-            if (sc) sc.outerHTML = renderSilhouette(lastBodyResult);
-          }
-          $('runstate').textContent = 'outline unavailable on this device — skeleton only.';
-        }
-      }
-      if (photo) drawPreview();
-    };
-  });
-  syncBodyViewCtl();
+  $('faceB').onchange = e => {
+    faceB = +e.target.value;
+    renderChips(); drawPreview();
+    if (hasRun) run();
+  };
   // (the import card is wired by import.js, a standalone module)
   $('copyjson').onclick = async () => {
     const rep = window.__wbLastReport || lastReport;
@@ -774,15 +684,6 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     dlp.onclick = () => {
       const t = window.__wbTelePng;
       if (!t) { $('exportstate').textContent = 'no annotated telemetry this run.'; return; }
-      // iOS Safari ignores the download attribute on data: URLs — a
-      // programmatic click navigates the whole page to the image instead of
-      // downloading it. Open a new tab there (long-press to save to Photos).
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-      if (isIOS) {
-        window.open(t.dataUrl, '_blank');
-        $('exportstate').textContent = 'opened in a new tab — long-press the image to save it.';
-        return;
-      }
       const a = document.createElement('a');
       a.href = t.dataUrl;
       a.download = 'workbench-telemetry-face' + (t.faceIdx + 1) + '-annotated.png';

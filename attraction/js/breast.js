@@ -571,7 +571,7 @@ export function fitAreolaEllipse(polar, nx, ny) {
 // the nipple) and the cleavage wall (never cross the midline into the other
 // breast). Where the mound blends into evenly-lit chest the boundary follows
 // the light falloff — honest about the indeterminacy.
-export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wallX = null, wallSide = 0, block = null) {
+export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wallX = null, wallSide = 0) {
   const atG = (x, y) => {
     const j = (y * w + x) * 3;
     return grayOf(rgb[j], rgb[j + 1], rgb[j + 2]);
@@ -594,7 +594,7 @@ export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wa
   const stack = [];
   for (const [x, y] of ringXY) {
     const p = y * w + x;
-    if (skin[p] && !inBlob[p] && !(block && block[p]) && atG(x, y) >= lo) { inBlob[p] = 1; stack.push(p); }
+    if (skin[p] && !inBlob[p] && atG(x, y) >= lo) { inBlob[p] = 1; stack.push(p); }
   }
   const rMax2 = rMax * rMax;
   let count = 0;
@@ -604,7 +604,7 @@ export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wa
     for (const [nx2, ny2] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
       if (nx2 < 0 || nx2 >= w || ny2 < 0 || ny2 >= h) continue;
       const q = ny2 * w + nx2;
-      if (inBlob[q] || !skin[q] || (block && block[q])) continue;
+      if (inBlob[q] || !skin[q]) continue;
       const ddx = nx2 - nx, ddy = ny2 - ny;
       if (ddx * ddx + ddy * ddy > rMax2) continue;
       if (wallX !== null && wallSide < 0 && nx2 > wallX) continue; // never cross the cleavage
@@ -670,22 +670,6 @@ export function breastContour(rgb, w, h, skin, nx, ny, areolaR, rMax, K = 12, wa
   return pts;
 }
 
-// Mound width: lateral extent of the analyzed breast measured from the
-// cleavage outward on the nipple's side. The contour's outer edge is the
-// honest bound; the skin-run edge is fallback only — it marks the torso/arm
-// edge, not the breast, and the old code always measured toward the run's
-// right end, which shot the cyan marker across the other breast for
-// image-left breasts.
-export function moundWidthPx(contour, cx, wallSide, run) {
-  if (contour && contour.length >= 8) {
-    const xs = contour.map(p => p.x);
-    const wpx = wallSide < 0 ? cx - Math.min(...xs) : Math.max(...xs) - cx;
-    return { px: Math.max(1, Math.round(wpx)), source: 'contour lateral extent' };
-  }
-  const xOuter = wallSide < 0 ? run[0] : run[1];
-  return { px: Math.max(1, Math.round(Math.abs(xOuter - cx))), source: 'skin run edge (contour too sparse)' };
-}
-
 // Fold curve: the existing single-column bottom-skin scan, extended across
 // the breast's horizontal extent. Per column, the first skin pixel from the
 // bottom — the boundary may be the fold, a garment edge, or the frame edge.
@@ -700,21 +684,10 @@ function foldCurve(skin, w, h, x0, x1) {
   return pts;
 }
 
-// Cleavage: darkest vertical shadow at nipple height. The search window is
-// anchored to the pose torso midline when the shoulders are visible
-// (mirror-proof); otherwise it falls back to the old fixed [0.48W, 0.70W]
-// window, which assumes a right-of-center torso and misses left-shifted
-// mirror selfies entirely.
-export function cleavageX(rgb, w, h, ny, midX = null) {
+// Cleavage: darkest vertical shadow at nipple height, x in [0.48W, 0.70W].
+function cleavageX(rgb, w, h, ny) {
   const y = Math.round(ny);
-  let x0, x1;
-  if (midX != null && isFinite(midX)) {
-    x0 = Math.round(midX - w * 0.12); x1 = Math.round(midX + w * 0.12);
-  } else {
-    x0 = Math.round(w * 0.483); x1 = Math.round(w * 0.700);
-  }
-  x0 = Math.max(0, x0); x1 = Math.min(w - 1, x1);
-  if (x1 - x0 < 51) { x0 = Math.round(w * 0.483); x1 = Math.round(w * 0.700); }
+  const x0 = Math.round(w * 0.483), x1 = Math.round(w * 0.700);
   const strip = [];
   for (let x = x0; x <= x1; x++) {
     let s = 0, n = 0;
@@ -736,19 +709,7 @@ export function cleavageX(rgb, w, h, ny, midX = null) {
   return x0 + bi;
 }
 
-// Other breast: the widest skin run on the far side of the cleavage line
-// from the nipple, excluding the nipple's own run. Pure + exported for tests.
-export function otherBreastRun(runs, run, nx, cx) {
-  const cands = (runs || []).filter(r => r !== run && r[1] - r[0] >= 8);
-  let best = null;
-  if (nx > cx) {
-    // nipple right of cleavage -> the other mound is entirely left of it
-    for (const r of cands) if (r[1] < cx && (!best || r[1] > best[1])) best = r;
-  } else {
-    for (const r of cands) if (r[0] > cx && (!best || r[0] < best[0])) best = r;
-  }
-  return best;
-}
+// Skin-mask runs along one row (gap tolerance 3px, like the prototype).
 function rowRuns(skin, w, y) {
   const runs = [];
   let cur = null;
@@ -863,13 +824,10 @@ function cupVerdict(moundWpx, nippleToFoldPx) {
 
 /* ---------------- main measurement: breast_telemetry/v1 ---------------- */
 
-export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null) {
+export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
   // rgb: Float32Array/Uint8Array/Buffer of RGB bytes, length w*h*3.
   // faces: optional [[x1,y1,x2,y2],...] from the workbench's face detector —
   //   nipple seeds inside a face box are vetoed (see detectNipple).
-  // pose: optional raw MediaPipe pose landmarks (33 normalized {x,y,visibility});
-  //   the shoulder->elbow->wrist polyline of the nipple-side arm becomes a
-  //   wall the mound flood cannot cross (stops the arm-leak scribbles).
   // Returns the exact breast_telemetry/v1 schema object, or null when the
   // pipeline cannot resolve the required landmarks.
   if (!rgb || rgb.length < w * h * 3) return null;
@@ -891,23 +849,16 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null
   const ar = areolaRadial(rgb, w, h, nx, ny);
   if (!ar) return null;
 
-  // 4. cleavage shadow at nipple height — search window anchored to the pose
-  //    torso midline when both shoulders are visible (mirror-proof). The old
-  //    fixed window assumed a right-of-center torso.
-  let torsoMidX = null;
-  if (pose && pose.length >= 33) {
-    const pv = i => pose[i] && (pose[i].visibility ?? 0) >= 0.5;
-    if (pv(PLM.l_shoulder) && pv(PLM.r_shoulder))
-      torsoMidX = (pose[PLM.l_shoulder].x + pose[PLM.r_shoulder].x) / 2 * w;
-  }
-  const cx = cleavageX(rgb, w, h, ny, torsoMidX);
+  // 4. cleavage shadow at nipple height
+  const cx = cleavageX(rgb, w, h, ny);
 
-  // 5. skin runs at nipple height (the mound width itself is measured from
-  //    the contour in 5e, after it exists)
+  // 5. mound cross-section at nipple height
   const yRow = Math.max(0, Math.min(h - 1, Math.round(ny)));
   const runs = rowRuns(skin, w, yRow);
   const run = runs.find(r => r[0] <= nx && nx <= r[1]);
   if (!run) return null;
+  const xOuter = run[1];
+  const moundWpx = xOuter - cx;
 
   // nipple-to-fold: skin column at nipple x, bottom = fabric edge
   const xCol = Math.max(0, Math.min(w - 1, Math.round(nx)));
@@ -923,12 +874,8 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null
   // 5c. breast mound contour — luminance-region boundary around the nipple
   const rMaxC = Math.min(Math.max(w, h), Math.round(nippleToFoldPx * 1.15));
   const wallSide = nx < cx ? -1 : 1; // breast sits on the nipple's side of the cleavage
-  // Arm wall from the pose skeleton: the nipple-side arm is a lateral wall the
-  // mound flood cannot cross. Without it the flood walks onto the adjacent
-  // arm (similar luminance, within rMax) and the contour comes back scribbled.
-  const armBlock = armWallMask(pose, w, h, nx, ny, rMaxC);
   const contour = breastContour(rgb, w, h, skin, nx, ny, ar.radius_px, rMaxC,
-    12, cx - wallSide * 12, wallSide, armBlock);
+    12, cx - wallSide * 12, wallSide);
 
   // 5d. fold curve across the contour's horizontal extent
   // (fallback when the contour is sparse: nipple ± 1.5 areola diameters)
@@ -938,11 +885,6 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null
     fx0 = Math.min(...cxs); fx1 = Math.max(...cxs);
   }
   const foldC = foldCurve(skin, w, h, fx0, fx1);
-
-  // 5e. mound width from the cleavage outward on the nipple's side (the old
-  //     skin-run measurement pointed the wrong way for image-left breasts).
-  const mound = moundWidthPx(contour, cx, wallSide, run);
-  const moundWpx = mound.px;
 
   // 6. scale anchor chain: barbell (chest plane) -> nails (hand plane) -> manual
   const barb = barbellAnchor(rgb, w, h, nx, ny);
@@ -982,17 +924,15 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null
   }
   const mm = px => mmPerPx == null ? null : r1(px * mmPerPx);
 
-  // other breast: skin run on the far side of the cleavage line from the
-  // nipple (the old hardcoded 0.30W probe latched onto the measured
-  // breast's own run on wide close-ups)
-  const lrun = otherBreastRun(runs, run, nx, cx);
+  // left breast: skin run at nipple height containing x ~ 0.30W (truncated)
+  const lrun = runs.find(r => r[0] <= w * 0.30 && w * 0.30 <= r[1]);
   const left_breast = lrun
     ? {
-        visible_from_x: Math.round(lrun[0]),
-        visible_to_x: Math.round(lrun[1]),
-        visible_width_px: lrun[1] - lrun[0],
+        visible_from_x: 0,
+        visible_to_x: lrun[1],
+        visible_width_px: lrun[1],
         truncated: true,
-        note: 'partial mound on the far side of the cleavage line from the measured nipple',
+        note: 'mound cut by frame edge; nipple sliver visible at left edge',
       }
     : { note: 'not resolved' };
 
@@ -1002,12 +942,6 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null
   for (const [k, v] of Object.entries(cup.band_table)) bt[k] = v;
 
   const areolaConf = ar.rays_used >= 40 ? 'high' : 'medium';
-  // outer-edge honesty note for the mound width confidence line
-  const outerGap = mound.source === 'contour lateral extent'
-    ? (wallSide < 0 ? Math.min(...contour.map(p => p.x)) : w - Math.max(...contour.map(p => p.x)))
-    : (wallSide < 0 ? run[0] : w - run[1]);
-  const moundNote = 'medium (' + mound.source + '; outer edge ' +
-    (outerGap <= 2 ? 'at frame edge (may undermeasure)' : 'resolved in frame') + ')';
   return {
     schema: SCHEMA,
     source: sourceName || 'upload',
@@ -1022,7 +956,6 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null
       right_nipple_to_fold_px: Math.round(nippleToFoldPx),
       right_fold_y_px: yBot,
       cleavage_x_at_nipple_height_px: cx,
-      arm_wall_applied: armBlock != null,
       nail_anchor_median_width_px: nail ? r1(nail.median_width_px) : null,
       barbell_ball_diameter_px: barb ? barb.ball_diameter_px : null,
     },
@@ -1071,7 +1004,9 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces, pose = null
         : 'not resolved (mound luminance region too small or fragmented)',
       fold_curve: foldC.length + ' columns over ' + Math.round(fx1 - fx0) +
         'px; boundary may be fold, garment edge, or frame edge',
-      mound_width: moundNote,
+      mound_width: 'medium (' + runs.length + ' skin run' + (runs.length === 1 ? '' : 's') +
+        ' at nipple height; outer edge ' +
+        (run[1] >= w - 2 ? 'at frame edge (may undermeasure)' : 'resolved in frame') + ')',
       nipple_to_fold: 'medium-high (' + Math.round(nippleToFoldPx) +
         'px nipple to lower skin boundary at y=' + yBot +
         '; boundary may be fold, garment edge, or frame edge)',
@@ -1152,46 +1087,6 @@ export function validateBreastTelemetry(obj) {
 // anything (no pose, shoulders unseen) — not a pass, not a fail.
 const PLM = { l_shoulder: 11, r_shoulder: 12, l_elbow: 13, r_elbow: 14,
               l_wrist: 15, r_wrist: 16, l_hip: 23, r_hip: 24 };
-
-// Arm wall: the shoulder->elbow->wrist polyline of the arm nearest the nipple,
-// rasterized thick into a block mask for the mound flood. Without it the flood
-// leaks onto the adjacent arm (similar luminance, well within rMax) and the
-// angular contour ordering degrades into scribbles. Mirror-proof: the side is
-// picked by nearest shoulder in x, not by left/right labels. Returns null
-// (no wall, old behavior) when pose is absent, the arm landmarks are
-// unreliable, or the arm isn't adjacent to the nipple — never invent a wall.
-export function armWallMask(pose, w, h, nx, ny, rMax) {
-  if (!pose || pose.length < 33) return null;
-  const vis = i => pose[i] && (pose[i].visibility ?? 0) >= 0.5;
-  const PX = i => ({ x: pose[i].x * w, y: pose[i].y * h });
-  if (!vis(PLM.l_shoulder) || !vis(PLM.r_shoulder)) return null;
-  const sL = PX(PLM.l_shoulder), sR = PX(PLM.r_shoulder);
-  const side = Math.abs(sL.x - nx) <= Math.abs(sR.x - nx) ? 'l' : 'r';
-  const si = side === 'l' ? PLM.l_shoulder : PLM.r_shoulder;
-  const ei = side === 'l' ? PLM.l_elbow : PLM.r_elbow;
-  const wi = side === 'l' ? PLM.l_wrist : PLM.r_wrist;
-  if (!vis(si) || !vis(ei) || !vis(wi)) return null;
-  const S = PX(si), E = PX(ei), W = PX(wi);
-  for (const p of [S, E, W])
-    if (!isFinite(p.x) || !isFinite(p.y) || p.x < 0 || p.x >= w || p.y < 0 || p.y >= h) return null;
-  if (Math.hypot(S.x - nx, S.y - ny) > rMax * 1.6) return null; // arm not adjacent: nothing to leak onto
-  const R = Math.max(5, Math.round(w * 0.008));
-  const mask = new Uint8Array(w * h);
-  const stamp = (x, y) => {
-    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
-      if (dx * dx + dy * dy > R * R) continue;
-      const xx = Math.round(x + dx), yy = Math.round(y + dy);
-      if (xx >= 0 && xx < w && yy >= 0 && yy < h) mask[yy * w + xx] = 1;
-    }
-  };
-  for (const [A, B] of [[S, E], [E, W]]) {
-    const len = Math.hypot(B.x - A.x, B.y - A.y);
-    const steps = Math.max(1, Math.ceil(len / 2));
-    for (let s = 0; s <= steps; s++)
-      stamp(A.x + (B.x - A.x) * s / steps, A.y + (B.y - A.y) * s / steps);
-  }
-  return mask;
-}
 
 export function poseCrossCheck(rep, pose, w, h) {
   const out = { applicable: false, passed: true, failures: [], warnings: [],
@@ -1313,18 +1208,11 @@ export function drawBreastOverlay(canvas, img, rep) {
   ctx.moveTo(X(mp.cleavage_x_at_nipple_height_px), ny - 40 * sy);
   ctx.lineTo(X(mp.cleavage_x_at_nipple_height_px), ny + 40 * sy);
   ctx.stroke();
-  // mound width horizontal (cleavage -> outer edge, on the nipple's side —
-  // the old code always drew rightward, shooting across the other breast
-  // for image-left breasts)
-  const leftBreast = mp.right_nipple.x < mp.cleavage_x_at_nipple_height_px;
-  const mx0 = leftBreast ? mp.cleavage_x_at_nipple_height_px - mp.right_mound_width_px
-                         : mp.cleavage_x_at_nipple_height_px;
-  const mx1 = leftBreast ? mp.cleavage_x_at_nipple_height_px
-                         : mp.cleavage_x_at_nipple_height_px + mp.right_mound_width_px;
+  // mound width horizontal (cleavage -> outer edge)
   ctx.strokeStyle = '#0ff';
   ctx.beginPath();
-  ctx.moveTo(X(mx0), ny);
-  ctx.lineTo(X(mx1), ny);
+  ctx.moveTo(X(mp.cleavage_x_at_nipple_height_px), ny);
+  ctx.lineTo(X(mp.cleavage_x_at_nipple_height_px + mp.right_mound_width_px), ny);
   ctx.stroke();
   // fold curve (green polyline) — supersedes the old straight fold line
   const fc = mp.right_fold_curve_px || [];
@@ -1340,10 +1228,8 @@ export function drawBreastOverlay(canvas, img, rep) {
   ctx.fillText('cleavage ' + mp.cleavage_x_at_nipple_height_px + 'px',
     X(mp.cleavage_x_at_nipple_height_px) + 6, ny - 46 * sy);
   ctx.fillStyle = '#0ff';
-  ctx.textAlign = 'center';
   ctx.fillText('mound ' + mp.right_mound_width_px + 'px',
-    X((mx0 + mx1) / 2), ny + 20 * sy);
-  ctx.textAlign = 'left';
+    X(mp.cleavage_x_at_nipple_height_px) + 6, ny + 20 * sy);
   if (el) {
     ctx.fillStyle = '#f0f';
     ctx.fillText('tilt ~' + Math.round(el.tilt_deg) + '°',

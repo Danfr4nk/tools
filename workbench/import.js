@@ -5,8 +5,8 @@
  * pure renderers, so this keeps working even when the photo pipeline fails to
  * boot — e.g. a CDN hiccup on the phone.
  */
-import { validateBreastTelemetry, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920f';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920f';
+import { validateBreastTelemetry, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920b';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderKinship, renderBody } from './render.js?v=20260920b';
 
 const $ = id => document.getElementById(id);
 const setStatus = html => { $('importState').innerHTML = html; };
@@ -40,6 +40,10 @@ function renderImportedReport(obj) {
     html += ins.telemetry.error ? errCard('facial telemetry', ins.telemetry.error)
       : (!ins.telemetry.metrics ? errCard('facial telemetry', 'no metrics in imported JSON')
         : safe('facial telemetry', () => renderTelemetry(ins.telemetry, faceIdx)));
+  }
+  if (ins.kinship) {
+    html += ins.kinship.error ? errCard('kinship', ins.kinship.error)
+      : safe('kinship', () => renderKinship(ins.kinship));
   }
   if (ins.breast_telemetry) {
     html += ins.breast_telemetry.error ? errCard('breast telemetry', ins.breast_telemetry.error)
