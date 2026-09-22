@@ -973,7 +973,9 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
         await modelMgr.ensure('det');
         try {
           const dh = detH();
-          faces = await P.detectFaces(dh.session, dh.names, photo.rgb, photo.w, photo.h);
+          // detectFaces expects the shared {det: session} shape (kinship
+          // pipeline contract) — not the bare session.
+          faces = await P.detectFaces({ det: dh.session }, dh.names, photo.rgb, photo.w, photo.h);
           faceA = 0;
           runState.rep.faces_detected = faces.length;
           $('facecard').classList.remove('hidden');
