@@ -119,6 +119,8 @@ $('run').addEventListener('click', async () => {
     ctx.drawImage(img, 0, 0, cv.width, cv.height);
     drawOutline(ctx, contour, cv.width, cv.height,
       { stroke: 'rgba(125,211,252,0.95)', width: 2 });
+    $('diag').textContent = diagReport(out, contour, cv, ctx);
+    $('diagcard').classList.remove('hidden');
     $('stagecard').classList.remove('hidden');
 
     renderMetrics(metrics);
@@ -130,6 +132,40 @@ $('run').addEventListener('click', async () => {
   }
   $('run').disabled = false;
 });
+
+// Diagnostics: proves each pipeline stage produced sane output, on the
+// user's own device. The stroke self-check scans the preview canvas for
+// the cyan stroke color — if the outline drew, this is nonzero.
+function diagReport(out, contour, cv, ctx) {
+  const L = [];
+  let nz = 0;
+  for (let i = 0; i < out.mask.length; i++) nz += out.mask[i] ? 1 : 0;
+  L.push('mask ' + out.w + 'x' + out.h + ' · person px ' + nz +
+         ' (' + (100 * nz / out.mask.length).toFixed(1) + '%)');
+  let mnx = Infinity, mxx = -Infinity, mny = Infinity, mxy = -Infinity, bad = 0;
+  for (const p of contour) {
+    if (!p || !isFinite(p[0]) || !isFinite(p[1])) { bad++; continue; }
+    if (p[0] < mnx) mnx = p[0]; if (p[0] > mxx) mxx = p[0];
+    if (p[1] < mny) mny = p[1]; if (p[1] > mxy) mxy = p[1];
+  }
+  L.push('contour ' + contour.length + ' pts · bbox x[' + mnx.toFixed(1) + ',' +
+         mxx.toFixed(1) + '] y[' + mny.toFixed(1) + ',' + mxy.toFixed(1) +
+         '] · bad pts ' + bad);
+  const sx = cv.width / 256, sy = cv.height / 256;
+  L.push('canvas ' + cv.width + 'x' + cv.height + ' · drawn bbox x[' +
+         Math.round(mnx * sx) + ',' + Math.round(mxx * sx) + '] y[' +
+         Math.round(mny * sy) + ',' + Math.round(mxy * sy) + ']');
+  let cyan = -1;
+  try {
+    const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    cyan = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 2] > 170 && d[i + 2] > d[i] + 40 && d[i + 1] > 150) cyan++;
+    }
+  } catch (e) { L.push('stroke self-check: canvas unreadable'); }
+  if (cyan >= 0) L.push('stroke self-check: ' + cyan + ' cyan px on canvas');
+  return L.join('\n');
+}
 
 function renderMetrics(s) {
   const f = (v) => (typeof v === 'number' ? v.toFixed(3) : '—');
