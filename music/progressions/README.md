@@ -42,7 +42,10 @@ grid-locked); `humanize:false` is bit-deterministic.
 `app.js`: WebAudio audition — stereo-widened detuned-saw pad through a
 sweeping lowpass, sine sub bass (808 glide on the LYNY lane), optional swung
 arp with feedback delay, gentle master compressor. Chord locks + 4/8 bar
-toggle. Export drops a `.mid` straight into GarageBand or any DAW.
+toggle. **Back track**: the 🥁 drums button loops the "Sun Goes Down" drums
+stem underneath the audition, time-stretched to your tempo (measured 146 BPM,
+halftime feel) — enabling it snaps tempo to 146 so it locks. Export drops
+a `.mid` straight into GarageBand or any DAW.
 
 ## Test
 

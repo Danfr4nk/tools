@@ -100,7 +100,10 @@ document.querySelectorAll('.bars').forEach(b => {
 });
 tempoSl.oninput = () => {
   $('bpmval').textContent = tempoSl.value;
-  if (prog) prog.tempo = +tempoSl.value;
+  if (prog) {
+    prog.tempo = +tempoSl.value;
+    if (drumsSrc) drumsSrc.playbackRate.value = prog.tempo / DRUMS_BPM;
+  }
 };
 $('gen').onclick = () => { locks = locks.map(() => null); generate(); };
 $('play').onclick = togglePlay;
@@ -284,12 +287,66 @@ function togglePlay() {
   playing ? stop() : start();
 }
 
+// --- back track: "Sun Goes Down" drums stem, measured 146.0 BPM
+// (halftime feel — the true pulse is 73, the grid is 146).
+const DRUMS_URL = 'assets/sun-goes-down-drums.mp3';
+const DRUMS_BPM = 146.0;
+let drumsOn = false, drumsBuf = null, drumsSrc = null, drumsLoading = false;
+
+async function loadDrums() {
+  if (drumsBuf || drumsLoading) return;
+  drumsLoading = true;
+  $('drums').textContent = '🥁 …';
+  ensureCtx();
+  try {
+    const r = await fetch(DRUMS_URL);
+    drumsBuf = await ctx.decodeAudioData(await r.arrayBuffer());
+  } finally {
+    drumsLoading = false;
+    $('drums').textContent = '🥁 drums';
+  }
+  if (drumsOn && playing) startDrums(ctx.currentTime + 0.05);
+}
+
+function startDrums(when) {
+  if (!drumsBuf) return;
+  stopDrums();
+  drumsSrc = ctx.createBufferSource();
+  drumsSrc.buffer = drumsBuf;
+  drumsSrc.loop = true;
+  drumsSrc.playbackRate.value = prog.tempo / DRUMS_BPM;
+  const g = ctx.createGain();
+  g.gain.value = 0.55;
+  drumsSrc.connect(g); g.connect(master);
+  drumsSrc.start(when);
+}
+
+function stopDrums() {
+  if (drumsSrc) { try { drumsSrc.stop(); } catch (e) { /* already stopped */ } drumsSrc = null; }
+}
+
+$('drums').onclick = async () => {
+  drumsOn = !drumsOn;
+  $('drums').classList.toggle('on', drumsOn);
+  if (drumsOn) {
+    // snap the audition to the stem's native tempo so it locks
+    tempoSl.value = Math.round(DRUMS_BPM);
+    $('bpmval').textContent = tempoSl.value;
+    if (prog) prog.tempo = +tempoSl.value;
+    await loadDrums();
+    if (playing && drumsBuf) startDrums(ctx.currentTime + 0.05);
+  } else {
+    stopDrums();
+  }
+};
+
 function start() {
   playing = true;
   $('play').textContent = '■ stop';
   nextBar = ctx.currentTime + 0.08;
   barIdx = 0;
   timer = setInterval(tick, 40);
+  if (drumsOn) startDrums(nextBar);
 }
 
 function stop() {
@@ -297,6 +354,7 @@ function stop() {
   $('play').textContent = '▶ play';
   if (timer) clearInterval(timer);
   timer = null;
+  stopDrums();
   document.querySelectorAll('.card').forEach(el => el.classList.remove('playing'));
 }
 
