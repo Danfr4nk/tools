@@ -50,7 +50,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   let hasRun = false;
   let poseRaw = null, poseTried = false; // per-photo MediaPipe pose landmarks (33, normalized)
   let silCache = null, silTried = false; // per-photo segmentation: {mask, w, h, contour} (mask coords)
-  let bodyView = 'outline'; // preview overlay mode: outline | skeleton | both
+  let bodyView = 'skeleton'; // preview overlay mode: outline | skeleton | both
+  let lastBodyResult = null; // body-telemetry result, for the lazy outline toggle
 
   /* ---------------- model loading ---------------- */
 
@@ -360,7 +361,15 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     try {
       const seg = await ensureSegmenter(m => { $('runstate').textContent = m; });
       if (!seg) return null;
-      const out = await segmentPerson(photo.img, seg);
+      // Downscale first: the model is 256x256 internally, so feeding a 12MP
+      // iPhone photo straight into the GPU delegate just burns memory — on
+      // iOS that got the tab Jetsam-killed (~20s in, silent reload).
+      const MAXD = 768, dsc = Math.min(1, MAXD / Math.max(photo.img.width, photo.img.height));
+      const dc = document.createElement('canvas');
+      dc.width = Math.max(1, Math.round(photo.img.width * dsc));
+      dc.height = Math.max(1, Math.round(photo.img.height * dsc));
+      dc.getContext('2d').drawImage(photo.img, 0, 0, dc.width, dc.height);
+      const out = await segmentPerson(dc, seg);
       if (!out || !out.mask || !out.mask.some(v => v)) return null;
       const loop = extractContour(out.mask, out.w, out.h);
       silCache = {
@@ -371,24 +380,12 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     return silCache;
   }
 
-  async function instrumentBody() {
-    $('runstate').textContent = 'estimating body pose…';
-    const raw = await ensurePoseRaw();
-    // Silhouette needs only pixels, not pose — it runs even when pose fails.
-    let sil = null;
-    try {
-      $('runstate').textContent = 'segmenting body outline…';
-      sil = await ensureSilhouetteRaw();
-    } catch (e) { sil = null; }
-    if (!raw && !sil) return { error: 'no pose detected and segmentation failed in this photo' };
-    // Strict full-body ratios (the body-metrics lab path: needs
-    // shoulders-through-ankles); the stick figure draws from raw regardless.
-    let strict = null;
-    try { strict = raw ? await measureBodyImage(photo.img) : { ok: false, skip_reason: 'no pose landmarks' }; }
-    catch (e) { strict = { ok: false, skip_reason: String((e && e.message) || e) }; }
-    // Annotated export: photo + outline and/or skeleton, downscaled.
+  // Annotated body export PNG (photo + skeleton and/or outline), downscaled.
+  // Rebuilt when the outline finishes lazy-loading so the export matches the view.
+  function buildBodyExportPng() {
     const full = document.createElement('canvas');
-    drawSkeleton(full, photo.img, raw); // photo alone when no pose
+    drawSkeleton(full, photo.img, poseRaw); // photo alone when no pose
+    const sil = silCache;
     if (sil && sil.contour)
       drawOutline(full.getContext('2d'), sil.contour, photo.w, photo.h,
         { stroke: 'rgba(125,211,252,0.95)', width: Math.max(2, photo.w / 300) });
@@ -397,19 +394,34 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     cv.width = Math.max(1, Math.round(full.width * sc));
     cv.height = Math.max(1, Math.round(full.height * sc));
     cv.getContext('2d').drawImage(full, 0, 0, cv.width, cv.height);
+    return cv.toDataURL('image/png');
+  }
+
+  async function instrumentBody() {
+    $('runstate').textContent = 'estimating body pose…';
+    const raw = await ensurePoseRaw();
+    // The outline is opt-in via the toggle below: loading the segmentation
+    // model during the instrument run got iOS Safari Jetsam-killed (~20s in,
+    // tab silently reloaded). The default path stays exactly as heavy as
+    // before the outline existed; tapping outline/both loads it on demand.
+    if (!raw) return { error: 'no pose detected in this photo' };
+    // Strict full-body ratios (the body-metrics lab path: needs
+    // shoulders-through-ankles); the stick figure draws from raw regardless.
+    let strict = null;
+    try { strict = raw ? await measureBodyImage(photo.img) : { ok: false, skip_reason: 'no pose landmarks' }; }
+    catch (e) { strict = { ok: false, skip_reason: String((e && e.message) || e) }; }
     return {
-      pose_png_dataurl: cv.toDataURL('image/png'),
-      has_outline: !!(sil && sil.contour),
+      pose_png_dataurl: buildBodyExportPng(),
+      has_outline: false, // filled in if the user loads the outline via the toggle
       has_skeleton: !!raw,
       ratios: strict.ok ? strict.ratios : null,
       visibility: strict.visibility || null,
       warnings: strict.warnings || [],
       skip_reason: strict.ok ? null : (strict.skip_reason || 'pose incomplete'),
-      silhouette: sil ? silhouetteMetrics(sil.mask, sil.w, sil.h, raw) : null,
-      silhouette_error: sil ? null : 'segmentation unavailable for this photo',
-      model: 'MediaPipe PoseLandmarker (pose_landmarker_lite, float16)' +
-        (sil ? ' + ImageSegmenter (selfie_multiclass_256x256)' : ''),
-      method: '33 landmarks → 9 segment lengths + 7 scale-invariant ratios (same definitions as the body-metrics lab); body outline = largest person-segment contour at 256px',
+      silhouette: null, // lazy: populated by the outline toggle, not the run
+      silhouette_error: 'pending',
+      model: 'MediaPipe PoseLandmarker (pose_landmarker_lite, float16)',
+      method: '33 landmarks → 9 segment lengths + 7 scale-invariant ratios (same definitions as the body-metrics lab); body outline = largest person-segment contour at 256px, loaded on demand',
     };
   }
 
@@ -453,8 +465,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       ctx.fillText(i === faceA ? 'A' : String(i + 1),
         x1 * scale + 4, y1 * scale + 16);
     });
-    // body overlay: outline / skeleton / both (outline wins by default when
-    // segmentation exists; skeleton is the fallback when it doesn't)
+    // body overlay: outline / skeleton / both (skeleton is the default; the
+    // outline appears once the user loads it via the toggle)
     const hasOutline = !!(silCache && silCache.contour);
     let mode = bodyView;
     if (mode === 'outline' && !hasOutline) mode = poseRaw ? 'skeleton' : 'none';
@@ -493,29 +505,36 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   // Silhouette metrics card — appended after renderBody's card. Widths are
   // mask px (256px mask); ratios are the comparable unit across photos.
   function renderSilhouette(r) {
-    if (!r || r.error) return '';
-    const s = r.silhouette;
-    if (!s) return card('body silhouette',
+    let inner;
+    if (!r || r.error) inner = '';
+    else if (r.silhouette) {
+      const s = r.silhouette;
+      const row = (k, v) => '<tr><td>' + esc(silhouetteLabel(k)) +
+        ' <span class="note">' + esc(k) + '</span></td><td>' + esc(v) + '</td></tr>';
+      const f = (v) => (typeof v === 'number' ? v.toFixed(3) : '—');
+      let h = '<div class="kpi">' +
+        '<div><div class="v">' + f(s.shoulder_waist) + '</div><div class="l">shoulder ÷ waist</div></div>' +
+        '<div><div class="v">' + f(s.waist_hip) + '</div><div class="l">waist ÷ hip</div></div>' +
+        '<div><div class="v">' + f(s.hip_shoulder) + '</div><div class="l">hip ÷ shoulder</div></div>' +
+        '<div><div class="v">' + (typeof s.area_fraction === 'number' ? (s.area_fraction * 100).toFixed(1) + '%' : '—') +
+        '</div><div class="l">frame covered</div></div></div>';
+      h += '<table class="metrics">' +
+        row('shoulder_width', s.shoulder_width + ' px @ row ' + s.rows.shoulder) +
+        row('waist_width', s.waist_width + ' px @ row ' + s.rows.waist) +
+        row('hip_width', s.hip_width + ' px @ row ' + s.rows.hip) +
+        row('area_fraction', f(s.area_fraction)) +
+        row('bbox_height_fraction', f(s.bbox_height_fraction)) +
+        '</table>';
+      h += '<p class="note">clothed-silhouette measurements — the outline traces clothing and hair, ' +
+        'not the body underneath; the ratios are the comparable unit. ' + esc(s.model || '') + '.</p>';
+      inner = card('body silhouette', h);
+    }
+    else if (r.silhouette_error === 'pending')
+      inner = card('body silhouette',
+        '<p class="note">outline not loaded — tap <b>outline</b> above the preview to trace it (the segmentation model loads on demand).</p>');
+    else inner = card('body silhouette',
       '<p class="note">segmentation unavailable for this photo — skeleton only.</p>');
-    const row = (k, v) => '<tr><td>' + esc(silhouetteLabel(k)) +
-      ' <span class="note">' + esc(k) + '</span></td><td>' + esc(v) + '</td></tr>';
-    const f = (v) => (typeof v === 'number' ? v.toFixed(3) : '—');
-    let h = '<div class="kpi">' +
-      '<div><div class="v">' + f(s.shoulder_waist) + '</div><div class="l">shoulder ÷ waist</div></div>' +
-      '<div><div class="v">' + f(s.waist_hip) + '</div><div class="l">waist ÷ hip</div></div>' +
-      '<div><div class="v">' + f(s.hip_shoulder) + '</div><div class="l">hip ÷ shoulder</div></div>' +
-      '<div><div class="v">' + (typeof s.area_fraction === 'number' ? (s.area_fraction * 100).toFixed(1) + '%' : '—') +
-      '</div><div class="l">frame covered</div></div></div>';
-    h += '<table class="metrics">' +
-      row('shoulder_width', s.shoulder_width + ' px @ row ' + s.rows.shoulder) +
-      row('waist_width', s.waist_width + ' px @ row ' + s.rows.waist) +
-      row('hip_width', s.hip_width + ' px @ row ' + s.rows.hip) +
-      row('area_fraction', f(s.area_fraction)) +
-      row('bbox_height_fraction', f(s.bbox_height_fraction)) +
-      '</table>';
-    h += '<p class="note">clothed-silhouette measurements — the outline traces clothing and hair, ' +
-      'not the body underneath; the ratios are the comparable unit. ' + esc(s.model || '') + '.</p>';
-    return card('body silhouette', h);
+    return '<div id="silcard">' + inner + '</div>';
   }
 
   function renderChips() {
@@ -564,7 +583,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       faces = []; embedCache = {}; faceA = 0;
       poseRaw = null; poseTried = false; // fresh pose per photo
       silCache = null; silTried = false; // fresh silhouette per photo
-      bodyView = 'outline'; syncBodyViewCtl();
+      lastBodyResult = null;
+      bodyView = 'skeleton'; syncBodyViewCtl();
       if (!detectReady) {
         setBar(0, 'loading detection models…');
         await loadDetect(pct => setBar(pct, 'loading detection models… ' + (pct * 100).toFixed(0) + '%'));
@@ -635,6 +655,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
         try {
           const r = await instrumentBody();
           rep.instruments.body_telemetry = r;
+          lastBodyResult = r; // the outline toggle patches this in place
           html += renderBody(r, RATIO_KEYS, ratioLabel);
           html += renderSilhouette(r);
         } catch (e) {
@@ -703,7 +724,34 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       b.classList.toggle('on', b.dataset.v === bodyView));
   }
   document.querySelectorAll('#bodyViewCtl .chip').forEach(b => {
-    b.onclick = () => { bodyView = b.dataset.v; syncBodyViewCtl(); if (photo) drawPreview(); };
+    b.onclick = async () => {
+      bodyView = b.dataset.v; syncBodyViewCtl();
+      // Outline loads on demand: the segmentation model + a full-res GPU
+      // inference is what got iOS Safari Jetsam-killed during the run.
+      if ((bodyView === 'outline' || bodyView === 'both') && !silTried && photo) {
+        $('runstate').textContent = 'loading segmentation model…';
+        let sil = null;
+        try { sil = await ensureSilhouetteRaw(); } catch (e) { sil = null; }
+        if (sil && sil.contour && lastBodyResult) {
+          lastBodyResult.silhouette = silhouetteMetrics(sil.mask, sil.w, sil.h, poseRaw);
+          lastBodyResult.silhouette_error = null;
+          lastBodyResult.has_outline = true;
+          lastBodyResult.model += ' + ImageSegmenter (selfie_multiclass_256x256)';
+          try { lastBodyResult.pose_png_dataurl = buildBodyExportPng(); } catch (e) {}
+          const sc = $('silcard');
+          if (sc) sc.outerHTML = renderSilhouette(lastBodyResult);
+          $('runstate').textContent = 'done.';
+        } else {
+          if (lastBodyResult) {
+            lastBodyResult.silhouette_error = 'unavailable';
+            const sc = $('silcard');
+            if (sc) sc.outerHTML = renderSilhouette(lastBodyResult);
+          }
+          $('runstate').textContent = 'outline unavailable on this device — skeleton only.';
+        }
+      }
+      if (photo) drawPreview();
+    };
   });
   syncBodyViewCtl();
   // (the import card is wired by import.js, a standalone module)
