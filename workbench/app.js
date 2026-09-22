@@ -25,6 +25,36 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
 
   const $ = id => document.getElementById(id);
 
+  /* ---------------- visible upload-status channel ---------------- */
+
+  // #uploadstate sits under the drop zone in #uploadcard, which is always
+  // visible — unlike #runstate, which lives in the hidden #runcard until a
+  // run starts. Phone-debugging helper (2026-09-22): every upload error lands
+  // here in plain text so it can be read on screen.
+  let uploadGlobalErrs = 0;
+  function uploadStatus(msg, isErr) {
+    const el = $('uploadstate');
+    if (!el) return;
+    if (isErr) {
+      el.innerHTML += (el.innerHTML ? '<br>' : '') +
+        '<span class="err">upload error: ' + esc(msg) + '</span>';
+    } else {
+      el.textContent = msg;
+    }
+  }
+  // Global trap: anything that throws outside a try/catch appends into the
+  // always-visible #uploadstate (never clobbers the upload line) and unhides
+  // #runcard so #runstate's own record is readable too. Capped at 5 so a
+  // pathological loop can't spam the page.
+  function showGlobalError(source, err) {
+    if (uploadGlobalErrs >= 5) return;
+    uploadGlobalErrs++;
+    const msg = String((err && err.message) || err || 'unknown error').slice(0, 400);
+    uploadStatus('[' + source + '] ' + msg, true);
+    const rc = $('runcard');
+    if (rc) rc.classList.remove('hidden');
+  }
+
   /* ---------------- constants ---------------- */
 
   // Lazy loading (2026-09-22): models load only when a selected instrument
@@ -740,9 +770,18 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
       await idbDel('current'); // a new photo invalidates any old resume record
       drawPreview();
       $('runstate').textContent = 'photo ready — pick instruments and run.';
+      uploadStatus('photo ready — pick instruments and run.');
       setBar(0);
     } catch (e) {
-      $('runstate').innerHTML = '<span class="err">' + esc(e.message || e) + '</span>';
+      // Upload errors must be READABLE on a phone: unhide the run card and
+      // write the message + stack in plain text, mirrored into the
+      // always-visible upload line (2026-09-22 phone-debugging fix).
+      const msg = (e && e.message) || String(e);
+      const stack = (e && e.stack) ? '\n' + String(e.stack).slice(0, 1200) : '';
+      $('runcard').classList.remove('hidden');
+      $('runstate').innerHTML = '<span class="err">upload failed: ' + esc(msg) +
+        (stack ? '<br>' + esc(stack) : '') + '</span>';
+      uploadStatus(msg + stack, true);
     }
   }
 
@@ -1056,13 +1095,20 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
   const drop = $('drop'), fileInput = $('file');
   drop.onclick = () => fileInput.click();
   drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } };
-  fileInput.onchange = () => fileInput.files[0] && handleFile(fileInput.files[0]);
+  fileInput.onchange = () => {
+    // Mark the moment the change event fires, BEFORE any await. If a tapped
+    // photo leaves the page stuck with no "photo chosen" line, the event
+    // never fired; if the line appears and then dies, handleFile threw.
+    uploadStatus('photo chosen — reading…');
+    const f = fileInput.files[0];
+    if (f) handleFile(f);
+  };
   drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = e => {
     e.preventDefault(); drop.classList.remove('over');
     const f = e.dataTransfer.files[0];
-    if (f) handleFile(f);
+    if (f) { uploadStatus('photo chosen — reading…'); handleFile(f); }
   };
   document.addEventListener('paste', e => {
     const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
@@ -1145,9 +1191,14 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
       $('exportstate').textContent = 'downloaded.';
     };
   }
+  // Global error trap (2026-09-22 phone-debugging fix): uncaught errors and
+  // unhandled rejections append into the always-visible #uploadstate via
+  // showGlobalError, which also unhides #runcard. Append, never clobber.
+  window.addEventListener('error', e => showGlobalError('error', e.error || e.message));
   window.addEventListener('unhandledrejection', e => {
     $('runstate').innerHTML = '<span class="err">error: ' +
       esc(String((e.reason && e.reason.message) || e.reason || e)) + '</span>';
+    showGlobalError('unhandledrejection', e.reason);
   });
 
   setBar(0, 'warming up…');
