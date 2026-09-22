@@ -125,7 +125,7 @@
       <div class="big">drop a photo here, click to browse, or paste from clipboard</div>
       <div>one photo is all it takes — every instrument below reads from the same detection pass</div>
     </div>
-    <div class="status" id="uploadstate" style="margin-top:8px">build 20260922h</div>
+    <div class="status" id="uploadstate" style="margin-top:8px">build 20260922i</div>
     <input type="file" id="file" accept="image/*" class="vh">
   </div>
 
@@ -156,8 +156,10 @@
         <div class="note" id="subjectNote" style="margin-bottom:10px">Subject <b>A</b> — every instrument below reads this face.</div>
         <div class="note" style="margin-bottom:10px">body region guide:
           <button class="chip" id="traceToggle">trace body</button>
+          <button class="chip hidden" id="traceFinish">finish trace</button>
+          <button class="chip hidden" id="traceUndo">undo point</button>
           <button class="chip hidden" id="traceClear">clear trace</button>
-          <div class="note" style="margin-top:4px">draw the body outline with your finger on the photo — body &amp; breast instruments use it as their initial search region. no model needed.</div>
+          <div class="note" style="margin-top:4px">tap points along the body outline on the photo — double-tap, tap the ringed first point, or hit finish trace to close it. body &amp; breast instruments use it as their initial search region. no model needed.</div>
         </div>
         <div class="note" id="bodyViewRow" style="display:none;margin-bottom:10px">body overlay:
           <span id="bodyViewCtl">

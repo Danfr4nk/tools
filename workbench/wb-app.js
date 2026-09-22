@@ -8,12 +8,12 @@
  */
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, disposeLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js?v=20260922b';
-import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260922h';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody, renderAnchor } from './render.js?v=20260922h';
-import { ensurePose, disposePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260922h';
+import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260922i';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody, renderAnchor } from './render.js?v=20260922i';
+import { ensurePose, disposePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260922i';
 import { ensureSegmenter, disposeSegmenter, segmentPerson, extractContour, extractLoops, smoothContour, silhouetteMetrics, drawOutline, silhouetteLabel } from '../attraction/js/silhouette.js?v=20260922b';
 import { faceAnchor, selectContour, validateAgainstAnchor, pointsBbox } from './face-anchor.js';
-import { simplifyStroke, traceUsable, traceLandmarkCoverage } from './trace.js';
+import { traceUsable, traceLandmarkCoverage } from './trace.js';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 import { planLifecycle, createModelManager, runPlannedSteps, MODEL_DEFS } from './model-lifecycle.js?v=20260922b';
 import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } from './resume-util.js?v=20260922b';
@@ -93,9 +93,12 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
   let bodyView = 'skeleton'; // preview overlay mode: outline | skeleton | both
   let lastBodyResult = null; // body-telemetry result, for the lazy outline toggle
   let anchorCache = {};      // faceIdx -> faceAnchor() result (or null); per photo
-  let bodyTrace = null;      // hand-traced body polygon {points:[[x,y]...]} in photo px; per photo
-  let traceMode = false;     // finger-draw mode on the preview canvas
-  let traceStroke = null;    // in-progress stroke (photo px), null when not drawing
+  let bodyTrace = null;      // hand-placed body polygon {points:[[x,y]...]} in photo px; per photo
+  let traceMode = false;     // tap-to-place mode on the preview canvas
+  let traceVerts = null;     // in-progress vertices (photo px), null when not placing
+  let traceHover = null;     // live preview point (photo px) for the rubber-band line
+  let traceLastTap = null;   // {t, x, y} canvas px — double-tap detection
+  let traceDownInfo = null;  // {t, x, y} canvas px — distinguishes taps from pans
 
   /* ---------------- model loading ---------------- */
 
@@ -777,29 +780,46 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
   }
 
   /* ---------------- hand trace (body region guide) ---------------- */
-  // The user finger-draws the body outline on the photo. The polygon (photo
-  // px) becomes the initial search-region guide for the body-symmetry and
-  // breast-telemetry instruments. No model needed — this path works even
-  // where the segmentation model gets jetsam-killed.
+  // Tap-to-place UX (replaces the old finger-draw, which was too inaccurate).
+  // The user taps points along the body outline on the photo; the vertex
+  // list (photo px) becomes the initial search-region guide for the
+  // body-symmetry and breast-telemetry instruments. No model needed — this
+  // path works even where the segmentation model gets jetsam-killed.
+  //
+  // Finish: double-tap anywhere, tap the first (ringed) vertex, or hit the
+  // "finish trace" button. "undo point" drops the last vertex; the toggle
+  // cancels placement entirely.
+
+  const TRACE_TAP_CLOSE_PX = 24;   // tap-within radius of the first vertex = close
+  const TRACE_TAP_MOVE_PX = 12;    // max finger travel to count as a tap
+  const TRACE_TAP_MS = 450;        // max press duration to count as a tap
+  const TRACE_DBL_MS = 350;        // double-tap window
 
   function syncTraceUI() {
-    const t = $('traceToggle'), c = $('traceClear');
+    const t = $('traceToggle'), f = $('traceFinish'), u = $('traceUndo'), c = $('traceClear');
     if (t) {
-      t.textContent = traceMode ? 'tracing… tap to cancel' : 'trace body';
+      t.textContent = traceMode ? 'placing… tap to cancel' : 'trace body';
       t.classList.toggle('on', traceMode);
     }
+    if (f) f.classList.toggle('hidden', !(traceMode && traceVerts && traceVerts.length >= 3));
+    if (u) u.classList.toggle('hidden', !(traceMode && traceVerts && traceVerts.length >= 1));
     if (c) c.classList.toggle('hidden', !bodyTrace);
   }
 
   function setTraceMode(on) {
     traceMode = on && !!photo;
-    traceStroke = null;
+    traceVerts = null;
+    traceHover = null;
+    traceLastTap = null;
+    traceDownInfo = null;
     const cv = $('preview');
     cv.style.touchAction = traceMode ? 'none' : '';
     cv.style.cursor = traceMode ? 'crosshair' : '';
     syncTraceUI();
-    if (traceMode)
-      uploadStatus('draw the body outline with your finger — lift to finish. One continuous loop is best.');
+    if (traceMode) {
+      refreshTraceView();
+      uploadStatus('tap points along the body outline — double-tap, tap the ringed first point, or hit finish trace to close it.');
+    }
   }
 
   // Pointer event -> photo pixel coordinates. Robust to CSS scaling via
@@ -813,56 +833,131 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
     return [cx / k, cy / k];
   }
 
-  function traceDown(e) {
-    if (!traceMode || !photo) return;
-    e.preventDefault();
+  // canvas-px position of a pointer event (for tap/distance thresholds)
+  function eventCanvasPx(e) {
     const cv = $('preview');
-    try { cv.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
-    drawPreview(); // clean base; segments draw incrementally from here
-    traceStroke = [canvasToPhoto(e)];
+    const r = cv.getBoundingClientRect();
+    return [
+      (e.clientX - r.left) * (cv.width / Math.max(1, r.width)),
+      (e.clientY - r.top) * (cv.height / Math.max(1, r.height)),
+    ];
   }
 
-  function traceMove(e) {
-    if (!traceMode || !traceStroke || !photo) return;
-    e.preventDefault();
-    const [x, y] = canvasToPhoto(e);
-    const last = traceStroke[traceStroke.length - 1];
+  // Redraw the base preview, then the in-progress vertices/dots/rubber band.
+  function refreshTraceView() {
+    drawPreview();
+    drawTraceOverlay();
+  }
+
+  // Draw the in-progress trace on top of the preview: cyan dots per vertex,
+  // segments between them, a rubber-band line to the live finger point, and
+  // a white ring on the first vertex (the tap-to-close target).
+  function drawTraceOverlay() {
+    if (!traceMode || !photo || !traceVerts || !traceVerts.length) return;
     const cv = $('preview'), k = cv.width / photo.w;
-    if (Math.hypot((x - last[0]) * k, (y - last[1]) * k) < 3) return; // 3 canvas-px spacing
-    traceStroke.push([x, y]);
     const ctx = cv.getContext('2d');
     ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(last[0] * k, last[1] * k);
-    ctx.lineTo(x * k, y * k);
+    traceVerts.forEach(([x, y], i) => { i ? ctx.lineTo(x * k, y * k) : ctx.moveTo(x * k, y * k); });
+    if (traceHover) ctx.lineTo(traceHover[0] * k, traceHover[1] * k);
     ctx.stroke();
+    ctx.fillStyle = '#22d3ee';
+    for (const [x, y] of traceVerts) {
+      ctx.beginPath(); ctx.arc(x * k, y * k, 5, 0, 7); ctx.fill();
+    }
+    const [fx, fy] = traceVerts[0];
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(fx * k, fy * k, 9, 0, 7); ctx.stroke();
   }
 
-  async function traceUp() {
-    if (!traceMode || !traceStroke) return;
-    const pts = traceStroke;
-    traceStroke = null;
-    setTraceMode(false);
-    if (pts.length < 4) { drawPreview(); uploadStatus('trace too short — try again.'); return; }
-    const simple = simplifyStroke(pts, Math.max(2, photo.w / 500));
-    const chk = traceUsable({ points: simple }, photo.w, photo.h);
-    if (!chk.usable) {
-      drawPreview();
-      uploadStatus('trace rejected: ' + chk.reason + ' — try again.', true);
+  function traceDown(e) {
+    if (!traceMode || !photo) return;
+    e.preventDefault();
+    const [cx, cy] = eventCanvasPx(e);
+    traceDownInfo = { t: Date.now(), x: cx, y: cy };
+    const cv = $('preview');
+    try { cv.setPointerCapture(e.pointerId); } catch (_) { /* best-effort */ }
+  }
+
+  function traceMove(e) {
+    if (!traceMode || !photo) return;
+    e.preventDefault();
+    traceHover = canvasToPhoto(e);
+    refreshTraceView();
+  }
+
+  function traceUp(e) {
+    if (!traceMode || !photo || !traceDownInfo) return;
+    const [cx, cy] = eventCanvasPx(e);
+    const dt = Date.now() - traceDownInfo.t;
+    const moved = Math.hypot(cx - traceDownInfo.x, cy - traceDownInfo.y);
+    traceDownInfo = null;
+    if (dt > TRACE_TAP_MS || moved > TRACE_TAP_MOVE_PX) {
+      traceHover = null; refreshTraceView(); // it was a pan/scroll, not a tap
       return;
     }
-    bodyTrace = { points: simple };
+    const now = Date.now();
+    // Double-tap anywhere finishes the polygon (without placing the tap).
+    if (traceLastTap && now - traceLastTap.t < TRACE_DBL_MS &&
+        Math.hypot(cx - traceLastTap.x, cy - traceLastTap.y) < TRACE_TAP_CLOSE_PX &&
+        traceVerts && traceVerts.length >= 3) {
+      traceLastTap = null;
+      finishTrace();
+      return;
+    }
+    const pt = canvasToPhoto(e);
+    // Tapping the ringed first vertex closes the polygon.
+    if (traceVerts && traceVerts.length >= 3) {
+      const cv = $('preview'), k = cv.width / photo.w;
+      const [fx, fy] = traceVerts[0];
+      if (Math.hypot(cx - fx * k, cy - fy * k) < TRACE_TAP_CLOSE_PX) {
+        traceLastTap = null;
+        finishTrace();
+        return;
+      }
+    }
+    if (!traceVerts) traceVerts = [];
+    traceVerts.push(pt);
+    traceLastTap = { t: now, x: cx, y: cy };
+    traceHover = null;
+    syncTraceUI();
+    refreshTraceView();
+    uploadStatus(traceVerts.length + ' points placed — ' +
+      (traceVerts.length >= 3 ? 'double-tap, tap the ringed first point, or finish trace to close.' : 'keep tapping along the outline.'));
+  }
+
+  async function finishTrace() {
+    if (!traceMode || !traceVerts || traceVerts.length < 3) return;
+    const verts = traceVerts;
+    const chk = traceUsable({ points: verts }, photo.w, photo.h);
+    if (!chk.usable) {
+      // Stay in placement mode so the user can add more points.
+      refreshTraceView();
+      uploadStatus('trace rejected: ' + chk.reason + ' — keep tapping to add points.', true);
+      return;
+    }
+    bodyTrace = { points: verts };
     try {
-      await idbPut('trace', { photoName, w: photo.w, h: photo.h, points: simple });
+      await idbPut('trace', { photoName, w: photo.w, h: photo.h, points: verts });
     } catch (_) { /* best-effort */ }
+    setTraceMode(false);
     syncTraceUI();
     drawPreview();
     uploadStatus('trace saved — ' + chk.points + ' points, ' +
       Math.round(chk.area_fraction * 100) + '% of frame. Body & breast instruments will use it as their search region.');
   }
 
+  function undoTracePoint() {
+    if (!traceMode || !traceVerts || !traceVerts.length) return;
+    traceVerts.pop();
+    if (!traceVerts.length) traceVerts = null;
+    syncTraceUI();
+    refreshTraceView();
+    uploadStatus(traceVerts ? traceVerts.length + ' points left.' : 'no points — tap to place the first one.');
+  }
+
   function traceCancel() {
-    traceStroke = null;
+    traceDownInfo = null;
     if (traceMode) setTraceMode(false);
     if (photo) drawPreview();
   }
@@ -956,7 +1051,7 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
     poseRaw = null; poseTried = false;
     silCache = null; silTried = false;
     anchorCache = {};
-    bodyTrace = null; traceMode = false; traceStroke = null;
+    bodyTrace = null; traceMode = false; traceVerts = null; traceHover = null;
     lastBodyResult = null;
     bodyView = 'skeleton'; syncBodyViewCtl();
     syncTraceUI();
@@ -1264,7 +1359,7 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
 
   /* ---------------- wiring ---------------- */
 
-  uploadStatus('build 20260922h — pick a photo to begin.');
+  uploadStatus('build 20260922i — pick a photo to begin.');
   const drop = $('drop'), fileInput = $('file');
   drop.onclick = () => fileInput.click();
   drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } };
@@ -1288,9 +1383,12 @@ import { remainingInstruments, orderReportHtml, sanitizeFaces, describeResume } 
     if (item) handleFile(item.getAsFile());
   });
   $('run').onclick = run;
-  // hand trace controls: the trace button toggles finger-draw mode on the
-  // preview canvas; the clear button drops the stored trace.
+  // hand trace controls: the trace button toggles tap-to-place mode on the
+  // preview canvas; finish closes the polygon; undo drops the last point;
+  // clear drops the stored trace.
   $('traceToggle').onclick = () => setTraceMode(!traceMode);
+  $('traceFinish').onclick = finishTrace;
+  $('traceUndo').onclick = undoTracePoint;
   $('traceClear').onclick = clearTrace;
   const pvc = $('preview');
   pvc.addEventListener('pointerdown', traceDown);
