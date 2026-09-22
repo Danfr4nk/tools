@@ -39,6 +39,13 @@
 // ADULT subjects. No age estimation here; in the workbench it ships
 // alongside the age instrument. The adult-subject sanity note is a standing
 // reminder, not a gate. Do not apply it to imagery that reads as a minor.
+//
+// Face-anchor wiring: with opts.anchor (a workbench/face-anchor.js result in
+// the same pixel space), nipple seeds outside the anchor-predicted torso
+// band are vetoed pre-scoring (finer than the face-box veto, which stays),
+// and the report carries face_anchor + face_anchor_check (expected vs
+// detected numbers, PASS/SUSPECT — never silent on mismatch). No anchor:
+// exactly the old behavior.
 
 export const SCHEMA = 'breast_telemetry/v1';
 
@@ -366,8 +373,18 @@ export function vetoSeedBlobs(blobs, faces) {
 //      face box (the workbench passes its SCRFD faces in). When every
 //      candidate is vetoed the pipeline fails honestly instead of fitting
 //      an ellipse to fingers and reading the cup "firm".
+//   6. Anchor torso-band veto (2026-09-22, optional): when a faceAnchor()
+//      result is passed in, candidates outside the anchor-predicted bust
+//      band are rejected pre-scoring — finer than the face-box veto, which
+//      stays. Skipped when the anchor is low-confidence; the band follows
+//      the anchor's rolled face axis, so tilted heads are handled.
 // Validated against both reference photos (lands on the true nipple).
-export function detectNipple(rgb, w, h, skin, faces) {
+export function detectNipple(rgb, w, h, skin, faces, anchor) {
+  // faces: optional array of [x1,y1,x2,y2] (or {bbox:[x1,y1,x2,y2]})
+  // anchor: optional faceAnchor() result, same pixel space (see
+  //   anchorUsable/anchorBandCheck). Ignored when unusable.
+  const bandOn = anchorUsable(anchor);
+  let bandVetoed = 0;
   // faces: optional array of [x1,y1,x2,y2] (or {bbox:[x1,y1,x2,y2]})
   const n = w * h;
   const V = new Float64Array(n), A = new Float64Array(n);
@@ -402,6 +419,8 @@ export function detectNipple(rgb, w, h, skin, faces) {
   const cands = [];
   for (const b of kept) {
     const cx = b.centroid.x, cy = b.centroid.y;
+    // Anchor torso-band veto, before any scoring (cheap, pure).
+    if (bandOn && anchorBandCheck(anchor, cx, cy).inside === false) { bandVetoed++; continue; }
     const coreV = [], ringV = [], annA = [], bgA = [];
     const R = 130;
     for (let dy = -R; dy <= R; dy++) {
@@ -424,7 +443,7 @@ export function detectNipple(rgb, w, h, skin, faces) {
     const redness = median(annA) - median(bgA);
     if (dV > 12 && redness > 2) cands.push({ x: cx, y: cy, dV, redness });
   }
-  if (!cands.length) return { vetoed }; // every candidate vetoed: honest failure, no x/y
+  if (!cands.length) return { vetoed, bandVetoed }; // every candidate vetoed: honest failure, no x/y
 
   // cluster density: neighbours within 70px
   for (const c of cands) {
@@ -450,7 +469,7 @@ export function detectNipple(rgb, w, h, skin, faces) {
       if (V[i] > 90 && As[i] > ba) { ba = As[i]; bx = x; by = y; }
     }
   }
-  return { x: bx, y: by, areolaSeed: win, vetoed };
+  return { x: bx, y: by, areolaSeed: win, vetoed, bandVetoed };
 }
 
 // Areola: radial-edge scan on the CIELAB a-channel from the nipple center.
@@ -824,13 +843,19 @@ function cupVerdict(moundWpx, nippleToFoldPx) {
 
 /* ---------------- main measurement: breast_telemetry/v1 ---------------- */
 
-export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
+export function measureBreastTelemetry(rgb, w, h, sourceName, faces, opts) {
   // rgb: Float32Array/Uint8Array/Buffer of RGB bytes, length w*h*3.
   // faces: optional [[x1,y1,x2,y2],...] from the workbench's face detector —
   //   nipple seeds inside a face box are vetoed (see detectNipple).
+  // opts: optional { anchor } — a faceAnchor() result for this photo, same
+  //   pixel space. Enables the anchor seed-band veto (finer than the
+  //   face-box veto, which stays) and adds face_anchor / face_anchor_check
+  //   to the report (expected vs detected numbers, PASS/SUSPECT — never
+  //   silent). Absent or unusable anchor: exactly the old behavior.
   // Returns the exact breast_telemetry/v1 schema object, or null when the
   // pipeline cannot resolve the required landmarks.
   if (!rgb || rgb.length < w * h * 3) return null;
+  const anchor = opts && opts.anchor;
 
   // 1. skin mask
   let skin = skinMask(rgb, w, h);
@@ -840,10 +865,11 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
   // 2. nipple seed (areola-first; the old HSV dark-red-disk detector is gone —
   //    it locked onto hair). x == null means every candidate was vetoed as
   //    non-anatomical — fail honestly, don't fit fingers.
-  const nip = detectNipple(rgb, w, h, skin, faces);
+  const nip = detectNipple(rgb, w, h, skin, faces, anchor);
   if (nip.x == null) return null;
   const nx = nip.x, ny = nip.y;
   const seedVetoes = nip.vetoed || 0;
+  const bandVetoes = nip.bandVetoed || 0;
 
   // 3. areola radial-edge fit
   const ar = areolaRadial(rgb, w, h, nx, ny);
@@ -942,7 +968,7 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
   for (const [k, v] of Object.entries(cup.band_table)) bt[k] = v;
 
   const areolaConf = ar.rays_used >= 40 ? 'high' : 'medium';
-  return {
+  const rep = {
     schema: SCHEMA,
     source: sourceName || 'upload',
     image: { w, h },
@@ -1017,6 +1043,25 @@ export function measureBreastTelemetry(rgb, w, h, sourceName, faces) {
       left_breast: lrun ? 'low (truncated by frame)' : 'not resolved',
     },
   };
+  // Face-anchor cross-check (only when an anchor was supplied): the report
+  // carries the anchor and the expected-vs-detected numbers — PASS/SUSPECT,
+  // never silent on mismatch.
+  if (anchor) {
+    rep.face_anchor = {
+      source: anchor.source || null,
+      confidence: anchor.confidence || null,
+      roll_deg: isFinite(anchor.rollDeg) ? anchor.rollDeg : null,
+      head_h_px: isFinite(anchor.headH) ? r1(anchor.headH) : null,
+      head_w_px: isFinite(anchor.headW) ? r1(anchor.headW) : null,
+      expected_box_px: anchor.expected || null,
+    };
+    rep.face_anchor_check = anchorCrossCheck(rep, anchor);
+    if (bandVetoes > 0)
+      rep.cup_estimate.note += ' ' + bandVetoes + ' rival nipple candidate' +
+        (bandVetoes === 1 ? '' : 's') +
+        ' rejected as outside the face-anchor torso band.';
+  }
+  return rep;
 }
 
 /* ---------------- schema validation (paste-JSON import) ---------------- */
@@ -1071,7 +1116,196 @@ export function validateBreastTelemetry(obj) {
   for (const k of ['areola_diameter', 'areola_ellipse', 'breast_contour', 'fold_curve',
     'mound_width', 'nipple_to_fold', 'physical_mm', 'cup', 'left_breast'])
     need(typeof cf[k] === 'string', 'missing confidence.' + k);
+  // Optional face-anchor extension (2026-09-22): accepted, loosely checked —
+  // it must never be required, and old reports without it stay valid.
+  const fa = obj.face_anchor_check;
+  need(fa == null || (fa && typeof fa === 'object' &&
+    typeof fa.applicable === 'boolean' && Array.isArray(fa.failures) &&
+    Array.isArray(fa.warnings) &&
+    (fa.verdict == null || fa.verdict === 'PASS' || fa.verdict === 'SUSPECT')),
+    'face_anchor_check, when present, must carry applicable/failures/warnings and verdict PASS/SUSPECT');
   return { ok: errors.length === 0, errors };
+}
+
+/* ---------------- face-anchor gates (torso band + scale + tilt) ---------------- */
+
+// The workbench computes a face anchor (workbench/face-anchor.js): head size
+// + the rolled face midline, turned into an expected body box in photo space.
+// These gates thread it into the breast pipeline:
+//   (a) SEED BAND VETO — candidates outside the anchor-predicted torso band
+//       are rejected before scoring (finer than the face-box veto, which
+//       stays). Applied inside detectNipple.
+//   (b) SCALE SANITY — mound width / areola diameter / nipple-to-fold in
+//       head units, checked against documented anthropometric ranges (soft:
+//       build and camera angle move these).
+//   (c) TILT — the band follows the anchor's rolled face axis, and the
+//       expected nipple-row line is perpendicular to it; the cleavage is
+//       cross-checked against the midline axis.
+// All pure, DOM-free, directly unit-tested (attraction/js/breast-anchor.test.js).
+// An anchor is "usable" when it has a finite unclipped box and usable head
+// geometry; the low-confidence (extreme-roll) fallback is never gated on —
+// the check reports it instead of guessing.
+
+export const NIPPLE_BAND_DEPTH_HEADS = 0.60;   // bust apex ~0.6 head-heights below the neck
+export const NIPPLE_BAND_HALF_HEADS = 0.32;   // generous band: 0.28–0.92 heads
+export const BAND_HALF_WIDTH_HEADW = 1.25;    // lateral slack: nipples sit within ~1 head-width of the midline
+export const SCALE_RANGES_HEADS = {
+  areola_diameter: [0.07, 0.45],  // ~38–50mm on a ~230mm head
+  mound_width: [0.35, 1.8],       // ~150–200mm mound; wide for build/camera angle
+  nipple_to_fold: [0.15, 1.2],    // ~80–120mm
+};
+export const CLEAVAGE_AXIS_TOL_HEADW = 0.75;   // cleavage must sit near the body midline
+
+// Recover the neck point (body-axis origin) from the anchor's unclipped box:
+// face-anchor.js builds expectedFull's x-center and y1 directly from
+// head.neck, so no workbench-side changes are needed to get it.
+export function anchorNeckPoint(anchor) {
+  const f = anchor && anchor.expectedFull;
+  if (!f || ![f.x1, f.y1, f.x2, f.y2].every(isFinite)) return null;
+  return { x: (f.x1 + f.x2) / 2, y: f.y1 };
+}
+
+export function anchorUsable(anchor) {
+  if (!anchor || typeof anchor !== 'object') return false;
+  const neck = anchorNeckPoint(anchor);
+  const ax = anchor.axis;
+  return !!(neck && ax && isFinite(ax.x) && isFinite(ax.y) && Math.hypot(ax.x, ax.y) > 0.5 &&
+    isFinite(anchor.headH) && anchor.headH > 0 && isFinite(anchor.headW) && anchor.headW > 0 &&
+    anchor.confidence !== 'low');
+}
+
+// Position of (x,y) relative to the torso band: depth along the body axis
+// (in head heights from the neck) and lateral offset (in head widths).
+export function anchorBandCheck(anchor, x, y) {
+  if (!anchorUsable(anchor) || !isFinite(x) || !isFinite(y)) return null;
+  const neck = anchorNeckPoint(anchor);
+  const al = Math.hypot(anchor.axis.x, anchor.axis.y);
+  const ax = anchor.axis.x / al, ay = anchor.axis.y / al;
+  const dx = x - neck.x, dy = y - neck.y;
+  const depthHeads = (dx * ax + dy * ay) / anchor.headH;
+  const lateralHeadw = Math.abs(dx * ay - dy * ax) / anchor.headW;
+  const lo = NIPPLE_BAND_DEPTH_HEADS - NIPPLE_BAND_HALF_HEADS;
+  const hi = NIPPLE_BAND_DEPTH_HEADS + NIPPLE_BAND_HALF_HEADS;
+  const inside = depthHeads >= lo && depthHeads <= hi && lateralHeadw <= BAND_HALF_WIDTH_HEADW;
+  const r2 = v => Math.round(v * 100) / 100;
+  return {
+    inside,
+    depth_heads: r2(depthHeads),
+    lateral_headw: r2(lateralHeadw),
+    band: { depth_lo_heads: lo, depth_hi_heads: hi, half_width_headw: BAND_HALF_WIDTH_HEADW },
+    reason: inside ? null :
+      (depthHeads < lo ? 'above the bust band' : depthHeads > hi ? 'below the bust band' : 'outside the torso width'),
+  };
+}
+
+// Expected nipple-row line: perpendicular to the rolled body axis at the
+// band center. Returned as an image-plane line orientation in degrees
+// (0 = horizontal) plus a point on the line, for overlay/report use.
+export function tiltedNippleRow(anchor) {
+  if (!anchorUsable(anchor)) return null;
+  const neck = anchorNeckPoint(anchor);
+  const al = Math.hypot(anchor.axis.x, anchor.axis.y);
+  const ax = anchor.axis.x / al, ay = anchor.axis.y / al;
+  const px = neck.x + ax * NIPPLE_BAND_DEPTH_HEADS * anchor.headH;
+  const py = neck.y + ay * NIPPLE_BAND_DEPTH_HEADS * anchor.headH;
+  // Row direction is perpendicular to the axis: (-ay, ax). Orientation is
+  // a line, so reduce mod 180 — 0 means horizontal.
+  const raw = Math.atan2(ax, -ay) * 180 / Math.PI;
+  const ang = ((raw % 180) + 180) % 180;
+  return { point: { x: r1(px), y: r1(py) },
+           dir: { x: Math.round(-ay * 1000) / 1000, y: Math.round(ax * 1000) / 1000 },
+           angle_deg: Math.round(ang * 10) / 10 };
+}
+
+// Scale sanity: measured px dims expressed in head units vs documented ranges.
+// dims: any subset of { areola_diameter_px, mound_width_px, nipple_to_fold_px }.
+export function anchorScaleCheck(anchor, dims) {
+  if (!anchorUsable(anchor)) return null;
+  const out = [];
+  const map = { areola_diameter_px: 'areola_diameter', mound_width_px: 'mound_width',
+                nipple_to_fold_px: 'nipple_to_fold' };
+  for (const [pxKey, name] of Object.entries(map)) {
+    const v = dims && dims[pxKey];
+    if (!isFinite(v)) continue;
+    const heads = v / anchor.headH;
+    const [lo, hi] = SCALE_RANGES_HEADS[name];
+    out.push({ metric: name, value_heads: Math.round(heads * 100) / 100,
+               range_heads: [lo, hi], ok: heads >= lo && heads <= hi });
+  }
+  return out;
+}
+
+// The breast report's anchor cross-check: mirrors poseCrossCheck's shape —
+// { applicable, passed, failures, warnings, reason, expected, detected,
+//   verdict }. Band position is the hard gate; scale is soft (build and
+// camera angle move it). Never silent: expected vs detected numbers are
+// always reported when an anchor was supplied.
+export function anchorCrossCheck(rep, anchor) {
+  const out = { applicable: false, passed: true, failures: [], warnings: [],
+                reason: null, expected: null, detected: null, verdict: null };
+  const mp = rep && rep.measured_px;
+  if (!mp || !mp.right_nipple || !isFinite(mp.right_nipple.x) || !isFinite(mp.right_nipple.y)) {
+    out.reason = 'no breast report to check'; return out;
+  }
+  if (!anchorUsable(anchor)) {
+    out.reason = !anchor ? 'no face anchor for this photo'
+      : 'face anchor not usable for gating (low confidence or missing geometry)';
+    return out;
+  }
+  out.applicable = true;
+  const nx = mp.right_nipple.x, ny = mp.right_nipple.y;
+  const band = anchorBandCheck(anchor, nx, ny);
+  const row = tiltedNippleRow(anchor);
+  const neck = anchorNeckPoint(anchor);
+  const scale = anchorScaleCheck(anchor, {
+    areola_diameter_px: mp.right_areola_diameter_px,
+    mound_width_px: mp.right_mound_width_px,
+    nipple_to_fold_px: mp.right_nipple_to_fold_px,
+  }) || [];
+  out.detected = {
+    right_nipple: { x: r1(nx), y: r1(ny) },
+    depth_heads: band.depth_heads, lateral_headw: band.lateral_headw,
+    scale_heads: Object.fromEntries(scale.map(s => [s.metric, s.value_heads])),
+  };
+  out.expected = {
+    anchor_source: anchor.source, anchor_confidence: anchor.confidence,
+    roll_deg: anchor.rollDeg, head_h_px: r1(anchor.headH), head_w_px: r1(anchor.headW),
+    neck_px: { x: r1(neck.x), y: r1(neck.y) },
+    axis: { x: anchor.axis.x, y: anchor.axis.y },
+    nipple_band: band.band,
+    expected_nipple_row_angle_deg: row.angle_deg,
+    scale_ranges_heads: SCALE_RANGES_HEADS,
+  };
+
+  // 1. torso band (hard): the seed must land in the bust band.
+  if (!band.inside)
+    out.failures.push('nipple seed ' + band.reason + ' (depth ' + band.depth_heads +
+      ' heads, lateral ' + band.lateral_headw + ' head-widths; band is ' +
+      band.band.depth_lo_heads + '-' + band.band.depth_hi_heads + ' heads deep, ±' +
+      band.band.half_width_headw + ' head-widths) — anatomically impossible');
+
+  // 2. cleavage vs midline axis (soft): the cleavage sits on the body
+  //    midline, so at nipple height it must sit near the rolled axis line.
+  if (isFinite(mp.cleavage_x_at_nipple_height_px)) {
+    const al = Math.hypot(anchor.axis.x, anchor.axis.y);
+    const ax = anchor.axis.x / al, ay = anchor.axis.y / al;
+    const perpHeadw = Math.abs((mp.cleavage_x_at_nipple_height_px - neck.x) * ay -
+                               (ny - neck.y) * ax) / anchor.headW;
+    if (perpHeadw > CLEAVAGE_AXIS_TOL_HEADW)
+      out.warnings.push('cleavage is ' + Math.round(perpHeadw * 100) / 100 +
+        ' head-widths off the face-axis midline — the midline read may be off-axis');
+  }
+
+  // 3. scale sanity (soft).
+  for (const s of scale) {
+    if (!s.ok)
+      out.warnings.push(s.metric + ' is ' + s.value_heads + ' head-heights (expected ' +
+        s.range_heads[0] + '-' + s.range_heads[1] + ') — build or camera angle may explain it');
+  }
+
+  out.passed = out.failures.length === 0;
+  out.verdict = out.passed ? 'PASS' : 'SUSPECT';
+  return out;
 }
 
 /* ---------------- body-pose cross-check ---------------- */
@@ -1234,5 +1468,33 @@ export function drawBreastOverlay(canvas, img, rep) {
     ctx.fillStyle = '#f0f';
     ctx.fillText('tilt ~' + Math.round(el.tilt_deg) + '°',
       X(el.center_x) + el.semi_major_px * sx + 6, Y(el.center_y) + 4);
+  }
+  // Face-anchor torso band (cyan, dashed): the bust band the nipple seed was
+  // gated against. Drawn only when the report carries an anchor cross-check.
+  const fa = rep.face_anchor_check;
+  const ex = fa && fa.expected;
+  if (ex && ex.neck_px && ex.axis && ex.nipple_band) {
+    const hh = ex.head_h_px, hw = ex.head_w_px;
+    const al = Math.hypot(ex.axis.x, ex.axis.y) || 1;
+    const ax = ex.axis.x / al, ay = ex.axis.y / al;
+    const px = -ay, py = ax; // perpendicular
+    const corner = (dHeads, wHeadw) => [
+      X(ex.neck_px.x + ax * dHeads * hh + px * wHeadw * hw),
+      Y(ex.neck_px.y + ay * dHeads * hh + py * wHeadw * hw),
+    ];
+    const lo = ex.nipple_band.depth_lo_heads, hi = ex.nipple_band.depth_hi_heads;
+    const hw2 = ex.nipple_band.half_width_headw;
+    ctx.strokeStyle = '#0cf';
+    ctx.setLineDash([8, 6]);
+    ctx.lineWidth = Math.max(2, w / 500);
+    ctx.beginPath();
+    const c1 = corner(lo, -hw2), c2 = corner(lo, hw2),
+          c3 = corner(hi, hw2), c4 = corner(hi, -hw2);
+    ctx.moveTo(c1[0], c1[1]); ctx.lineTo(c2[0], c2[1]);
+    ctx.lineTo(c3[0], c3[1]); ctx.lineTo(c4[0], c4[1]);
+    ctx.closePath(); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#0cf';
+    ctx.fillText('anchor band ' + (fa.verdict || ''), c2[0] + 6, c2[1] + 4);
   }
 }
