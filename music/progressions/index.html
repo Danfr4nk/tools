@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROGRESSIONS — chord loops in your lanes</title>
+<link rel="stylesheet" href="style.css?v=20260922a">
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="../">← music</a>
+  <h1>PROGRESSIONS</h1>
+  <p class="dim">Chord loops generated in the harmonic lanes of the three you named —
+     pick one, hit generate, play it, take the MIDI.</p>
+
+  <div class="row styles">
+    <button class="style on" data-style="nimino">nimino</button>
+    <button class="style" data-style="oskar">oskar med k</button>
+    <button class="style" data-style="lyny">LYNY</button>
+  </div>
+
+  <div class="row">
+    <label>key
+      <select id="key"></select>
+    </label>
+    <label>mode
+      <select id="mode">
+        <option value="auto">auto</option>
+        <option value="min">minor</option>
+        <option value="maj">major</option>
+      </select>
+    </label>
+    <label>tempo <span id="bpmval">124</span>
+      <input type="range" id="tempo" min="90" max="150" value="124">
+    </label>
+    <label class="chk"><input type="checkbox" id="arp"> arp</label>
+  </div>
+
+  <div class="row">
+    <button id="gen" class="big">generate</button>
+    <button id="play" class="big">▶ play</button>
+    <button id="midi">↓ MIDI</button>
+  </div>
+
+  <div id="cards"></div>
+  <p class="dim foot">Pads are 9ths and 11ths, voice-led so nothing jumps. Bass follows
+     each lane's pattern — garage bounce, warm sustain, or long sub. The MIDI
+     drops straight into GarageBand or any DAW.</p>
+</div>
+<script type="module" src="app.js?v=20260922a"></script>
+</body>
+</html>
