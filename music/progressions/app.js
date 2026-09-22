@@ -102,7 +102,7 @@ tempoSl.oninput = () => {
   $('bpmval').textContent = tempoSl.value;
   if (prog) {
     prog.tempo = +tempoSl.value;
-    if (drumsSrc) drumsSrc.playbackRate.value = prog.tempo / DRUMS_BPM;
+    syncDrumsRate();
   }
 };
 $('gen').onclick = () => { locks = locks.map(() => null); generate(); };
@@ -273,6 +273,7 @@ function scheduleBar(t, ci) {
 function tick() {
   const spb = 60 / prog.tempo;
   const barDur = 4 * spb;
+  syncDrumsRate(); // back-track loop re-locks to the slider every tick
   while (nextBar < ctx.currentTime + 0.25) {
     scheduleBar(nextBar, barIdx % prog.bars);
     nextBar += barDur;
@@ -287,11 +288,21 @@ function togglePlay() {
   playing ? stop() : start();
 }
 
-// --- back track: "Sun Goes Down" drums stem, measured 146.0 BPM
-// (halftime feel — the true pulse is 73, the grid is 146).
+// --- back track: "Sun Goes Down" drums stem.
+// Measured 2026-09-22: exactly 128.00 BPM. The stem is a 5-minute arrangement,
+// so instead of looping the whole file we loop one measured 4-bar pocket
+// (270.05s-277.55s, 0.98 self-similarity, starts on a beat) via loopStart /
+// loopEnd. The tight loop re-anchors every 4 bars, so tempo changes can't
+// accumulate drift — playbackRate re-locks to the slider every scheduler tick.
 const DRUMS_URL = 'assets/sun-goes-down-drums.mp3';
-const DRUMS_BPM = 146.0;
+const DRUMS_BPM = 128.0;
+const DRUMS_LOOP_START = 270.05;
+const DRUMS_LOOP_END = 277.55;
 let drumsOn = false, drumsBuf = null, drumsSrc = null, drumsLoading = false;
+
+function syncDrumsRate() {
+  if (drumsSrc && prog) drumsSrc.playbackRate.value = prog.tempo / DRUMS_BPM;
+}
 
 async function loadDrums() {
   if (drumsBuf || drumsLoading) return;
@@ -314,11 +325,13 @@ function startDrums(when) {
   drumsSrc = ctx.createBufferSource();
   drumsSrc.buffer = drumsBuf;
   drumsSrc.loop = true;
-  drumsSrc.playbackRate.value = prog.tempo / DRUMS_BPM;
+  drumsSrc.loopStart = DRUMS_LOOP_START;
+  drumsSrc.loopEnd = DRUMS_LOOP_END;
+  syncDrumsRate();
   const g = ctx.createGain();
   g.gain.value = 0.55;
   drumsSrc.connect(g); g.connect(master);
-  drumsSrc.start(when);
+  drumsSrc.start(when, DRUMS_LOOP_START);
 }
 
 function stopDrums() {
@@ -374,3 +387,13 @@ function exportMidi() {
 }
 
 generate();
+
+// invisible debug handle, only with ?debug — used by automated checks
+if (location.search.includes('debug')) {
+  window.__drums = {
+    get src() { return drumsSrc; },
+    get prog() { return prog; },
+    get on() { return drumsOn; },
+    constants: { DRUMS_BPM, DRUMS_LOOP_START, DRUMS_LOOP_END },
+  };
+}
