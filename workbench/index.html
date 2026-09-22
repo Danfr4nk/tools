@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>workbench — one photo, every instrument</title>
-<meta name="description" content="Upload one photo. Shared face detection fans out to age estimation, kinship comparison, and facial telemetry in a single pass — all on-device.">
+<meta name="description" content="Upload one photo. Shared face detection fans out to age estimation and facial telemetry in a single pass — all on-device.">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -28,7 +28,7 @@
   .drop .big { font-size: 17px; color: #cfd6e4; margin-bottom: 6px; }
   .row { display: flex; gap: 14px; flex-wrap: wrap; }
   .row > * { flex: 1 1 300px; }
-  canvas.preview { max-width: 100%; border-radius: 10px; display: block; }
+  .preview { max-width: 100%; border-radius: 10px; display: block; }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
   .chip { background: #1a2233; border: 1px solid #2b3a55; color: #cfd6e4;
           border-radius: 99px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
@@ -80,8 +80,8 @@
 <div class="wrap">
   <h1>workbench</h1>
   <p class="sub">One photo in. Shared face detection fans out to every instrument in a single
-  pass — <a href="../age/">age estimation</a>, <a href="../kinship/">kinship comparison</a>,
-  and <a href="../attraction/telemetry.html">facial telemetry</a> — then lands in one unified
+  pass — <a href="../age/">age estimation</a> and
+  <a href="../attraction/telemetry.html">facial telemetry</a> — then lands in one unified
   report. Everything runs on your device; the photo never leaves this page.</p>
 
   <div class="card">
@@ -124,9 +124,12 @@
       <div>
         <div class="chips" id="chipsA"></div>
         <div class="note" style="margin-bottom:10px">Subject <b>A</b> — every instrument below reads this face.</div>
-        <div id="kinshipPick" class="hidden">
-          <label class="note" for="faceB">Kinship target <b>B</b>:</label><br>
-          <select id="faceB"></select>
+        <div class="note" id="bodyViewRow" style="display:none;margin-bottom:10px">body overlay:
+          <span id="bodyViewCtl">
+            <button class="chip" data-v="outline">outline</button>
+            <button class="chip" data-v="skeleton">skeleton</button>
+            <button class="chip" data-v="both">both</button>
+          </span>
         </div>
       </div>
     </div>
@@ -137,7 +140,6 @@
     <div>
       <label class="tgl"><input type="checkbox" id="tAge" checked> age estimation <span class="note">(ViT bracket classifier + genderage second opinion)</span></label><br>
       <label class="tgl"><input type="checkbox" id="tTele" checked> facial telemetry <span class="note">(17-ratio MediaPipe vector)</span></label><br>
-      <label class="tgl"><input type="checkbox" id="tKin" checked> kinship <span class="note">(A vs B embeddings — needs two faces)</span></label><br>
       <label class="tgl"><input type="checkbox" id="tBody" checked> body telemetry <span class="note">(pose stick figure + 16 body ratios — runs without a face)</span></label><br>
       <label class="tgl"><input type="checkbox" id="tBust" checked> breast telemetry <span class="note">(breast_telemetry/v1 — torso photos, adult subjects; runs without a face)</span></label>
     </div>
@@ -164,7 +166,7 @@
   calibration — a resemblance meter, not a test. First run downloads models (~250&nbsp;MB total);
   everything is cached by your browser afterwards.</p>
 </div>
-<script type="module" src="import.js?v=20260920b"></script>
-<script type="module" src="app.js?v=20260920b"></script>
+<script type="module" src="import.js?v=20260920f"></script>
+<script type="module" src="app.js?v=20260921g"></script>
 </body>
 </html>
