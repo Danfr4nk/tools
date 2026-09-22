@@ -6,7 +6,7 @@
  * boot — e.g. a CDN hiccup on the phone.
  */
 import { validateBreastTelemetry, SCHEMA as BUST_SCHEMA } from '../attraction/js/breast.js?v=20260920f';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920f';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody, renderAnchor } from './render.js?v=20260922a';
 
 const $ = id => document.getElementById(id);
 const setStatus = html => { $('importState').innerHTML = html; };
@@ -49,7 +49,7 @@ function renderImportedReport(obj) {
     // no ratio labels on the import path (render.js stays MediaPipe-free);
     // renderBody falls back to raw key names in stored order.
     html += ins.body_telemetry.error ? errCard('body telemetry', ins.body_telemetry.error)
-      : safe('body telemetry', () => renderBody(ins.body_telemetry));
+      : safe('body telemetry', () => renderBody(ins.body_telemetry) + renderAnchor(ins.body_telemetry));
   }
   $('report').innerHTML = html;
   const ec = $('exportcard');

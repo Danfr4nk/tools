@@ -88,6 +88,58 @@ export function renderBody(r, ratioKeys, ratioLabelFn) {
 }
 
 // photoImg: an HTMLImageElement for the landmark overlay, or null (pure import).
+// Face anchor readout: the face-predicted body box vs the detected body box.
+// r.face_anchor comes from the 7.5-heads canon; r.anchor_check carries the
+// pose-bbox validation gate (PASS/SUSPECT); r.anchor_note covers the no-face
+// and failure fallbacks. Pure — safe for the JSON importer.
+export function renderAnchor(r) {
+  if (!r || r.error) return '';
+  const a = r.face_anchor, chk = r.anchor_check;
+  if (!a) {
+    return card('face anchor', '<p class="note">' +
+      esc(r.anchor_note || 'no face anchor — body search ran full-frame.') + '</p>');
+  }
+  const f = (v) => (typeof v === 'number' ? v.toFixed(1) : '—');
+  const e = a.expected;
+  const ew = e.x2 - e.x1, eh = e.y2 - e.y1;
+  let h = '<div class="kpi">' +
+    '<div><div class="v">' + f(a.headH) + ' px</div><div class="l">head height · ' + esc(a.source) + '</div></div>' +
+    '<div><div class="v">' + f(ew) + '×' + f(eh) + '</div><div class="l">expected body box (px)</div></div>';
+  if (chk) {
+    const d = chk.detected;
+    const dw = d.x2 - d.x1, dh = d.y2 - d.y1;
+    h += '<div><div class="v">' + f(dw) + '×' + f(dh) + '</div><div class="l">detected body box (px)</div></div>' +
+      '<div><div class="v">' + chk.iou.toFixed(2) + '</div><div class="l">box IoU</div></div>' +
+      '<div><div class="v" style="color:' + (chk.pass ? '#22c55e' : '#f87171') + '">' +
+      esc(chk.verdict) + '</div><div class="l">validation gate</div></div>';
+  }
+  h += '</div><table class="metrics">';
+  const row = (k, v) => '<tr><td>' + esc(k) + '</td><td>' + esc(v) + '</td></tr>';
+  h += row('anchor source', a.source === 'landmarks' ? 'face landmarks (478-pt)' : 'face bbox only') +
+    row('anchor confidence', a.confidence) +
+    row('head roll', a.rollDeg.toFixed(1) + '°') +
+    row('expected box', '(' + f(e.x1) + ', ' + f(e.y1) + ') → (' + f(e.x2) + ', ' + f(e.y2) + ')');
+  if (a.halfBody) h += row('framing', 'half-body crop — the canon body runs below the frame (expected, clipped)');
+  else if (a.clipped) h += row('framing', 'expected box clipped at the frame edge');
+  if (chk) {
+    h += row('width ratio (det/exp)', chk.widthRatio.toFixed(2)) +
+      row('height ratio (det/exp)', chk.heightRatio.toFixed(2));
+    for (const fl of (chk.failures || []))
+      h += row('✗ gate failure', fl);
+  } else if (r.anchor_note) {
+    h += row('check', r.anchor_note);
+  }
+  h += '</table>';
+  if (chk && !chk.pass)
+    h += '<div class="cav" style="border-color:#f87171"><b>SUSPECT body read</b> — the detected ' +
+      'body box does not match the face-predicted box. Treat the body numbers below as unreliable.</div>';
+  h += '<p class="note">anchor = 7.5-heads canon: body height ≈ 7.5 × head height ' +
+    '(crown→chin ≈ 1.24 × forehead→chin), shoulders ≈ 2 × head width, centered on the ' +
+    'landmark-derived face axis (tilt-corrected), top just below the chin. Gate: IoU ≥ 0.30 ' +
+    'and both dimensions within ±40% of expected.</p>';
+  return card('face anchor — body box prediction', h);
+}
+
 export function renderBreast(rep, photoImg) {
   const mp = rep.measured_px, sm = rep.scale_model, ph = rep.modeled_physical, ce = rep.cup_estimate;
   const row = (k, v) => '<tr><td>' + esc(k) + '</td><td>' + esc(v) + '</td></tr>';

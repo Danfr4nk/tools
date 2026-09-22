@@ -9,9 +9,10 @@
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
 import { ensureLandmarker, landmarkerError, landmarkerDelegate, detectError, detectLandmarks, measureImage } from '../attraction/js/measure.js';
 import { measureBreastTelemetry, validateBreastTelemetry, poseCrossCheck } from '../attraction/js/breast.js?v=20260920f';
-import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody } from './render.js?v=20260920f';
+import { esc, card, renderBreast, renderAge, renderTelemetry, renderBody, renderAnchor } from './render.js?v=20260922a';
 import { ensurePose, measureImage as measureBodyImage, drawSkeleton, SKELETON, RATIO_KEYS, ratioLabel } from '../attraction/js/body.js?v=20260920f';
-import { ensureSegmenter, segmentPerson, extractContour, smoothContour, silhouetteMetrics, drawOutline, silhouetteLabel } from '../attraction/js/silhouette.js?v=20260921a';
+import { ensureSegmenter, segmentPerson, extractContour, extractLoops, smoothContour, silhouetteMetrics, drawOutline, silhouetteLabel } from '../attraction/js/silhouette.js?v=20260921a';
+import { faceAnchor, selectContour, validateAgainstAnchor, pointsBbox } from './face-anchor.js';
 import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
 
 (function () {
@@ -49,9 +50,10 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
   let lastReport = null;
   let hasRun = false;
   let poseRaw = null, poseTried = false; // per-photo MediaPipe pose landmarks (33, normalized)
-  let silCache = null, silTried = false; // per-photo segmentation: {mask, w, h, contour} (mask coords)
+  let silCache = null, silTried = false; // per-photo segmentation: {mask, w, h, contour, anchorPick} (mask coords)
   let bodyView = 'skeleton'; // preview overlay mode: outline | skeleton | both
   let lastBodyResult = null; // body-telemetry result, for the lazy outline toggle
+  let anchorCache = {};      // faceIdx -> faceAnchor() result (or null); per photo
 
   /* ---------------- model loading ---------------- */
 
@@ -207,13 +209,21 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     });
   }
 
-  // Expanded square crop around a face bbox, returned as a canvas.
-  function faceCropCanvas(face, size) {
+  // Expanded square crop around a face bbox: photo-space rect {sx, sy, side}.
+  // Returned separately from the canvas so landmark coordinates measured on
+  // the crop can be mapped back to photo space (the face-anchor needs them).
+  function faceCropRect(face) {
     const [x1, y1, x2, y2] = face.bbox;
     const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
     let side = Math.max(x2 - x1, y2 - y1) * 1.5;
-    let sx = Math.max(0, cx - side / 2), sy = Math.max(0, cy - side / 2);
+    const sx = Math.max(0, cx - side / 2), sy = Math.max(0, cy - side / 2);
     side = Math.min(side, photo.w - sx, photo.h - sy);
+    return { sx, sy, side };
+  }
+
+  // Expanded square crop around a face bbox, returned as a canvas.
+  function faceCropCanvas(face, size) {
+    const { sx, sy, side } = faceCropRect(face);
     const src = document.createElement('canvas');
     src.width = photo.w; src.height = photo.h;
     const sctx = src.getContext('2d');
@@ -237,6 +247,29 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       im.onerror = reject;
       im.src = cv.toDataURL('image/jpeg', 0.92);
     });
+  }
+
+  // Face anchor for the body instruments: face box + landmarks (mapped back to
+  // photo space via the crop rect) -> expected body box from the 7.5-heads
+  // canon. Landmark failure degrades to a bbox-only anchor; a missing face
+  // degrades to null and the body instruments fall back to full-frame search.
+  // Cached per (photo, face).
+  async function ensureFaceAnchor(faceIdx) {
+    if (anchorCache[faceIdx] !== undefined) return anchorCache[faceIdx];
+    const face = faces[faceIdx];
+    if (!face) { anchorCache[faceIdx] = null; return null; }
+    let lmPhoto = null;
+    try {
+      if (!teleReady) await loadTelemetry(m => { $('runstate').textContent = m; });
+      const cropImg = await cropToImage(face);
+      const tf = faceCropRect(face);
+      const lm = detectLandmarks(cropImg);
+      if (lm && lm.length >= 478)
+        lmPhoto = lm.map(p => ({ x: p.x * tf.side + tf.sx, y: p.y * tf.side + tf.sy }));
+    } catch (e) { lmPhoto = null; }
+    const a = faceAnchor(lmPhoto, face.bbox, photo.w, photo.h);
+    anchorCache[faceIdx] = a;
+    return a;
   }
 
   /* ---------------- instruments ---------------- */
@@ -371,10 +404,30 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       dc.getContext('2d').drawImage(photo.img, 0, 0, dc.width, dc.height);
       const out = await segmentPerson(dc, seg);
       if (!out || !out.mask || !out.mask.some(v => v)) return null;
-      const loop = extractContour(out.mask, out.w, out.h);
+      // Anchor-constrained contour pick: the face anchor chooses the loop
+      // with the best IoU against the expected body box instead of blindly
+      // taking the largest loop (matters with background people in frame).
+      // No face -> largest loop, exactly the old behavior.
+      const loops = extractLoops(out.mask, out.w, out.h);
+      let pick = { loop: loops.length ? loops[0] : [], iou: 0, index: 0, anchored: false };
+      let anchor = null;
+      if (loops.length > 1 && faces.length) {
+        try { anchor = await ensureFaceAnchor(faceA); } catch (e) { anchor = null; }
+        if (anchor) {
+          const sx = out.w / photo.w, sy = out.h / photo.h;
+          const eb = anchor.expected;
+          pick = selectContour(loops, {
+            x1: eb.x1 * sx, y1: eb.y1 * sy, x2: eb.x2 * sx, y2: eb.y2 * sy,
+          });
+        }
+      }
+      const loop = pick.loop;
       silCache = {
         mask: out.mask, w: out.w, h: out.h,
         contour: loop.length > 8 ? smoothContour(loop, 3) : null,
+        anchorPick: pick.anchored
+          ? { loops: loops.length, index: pick.index, iou: +pick.iou.toFixed(3) }
+          : null,
       };
     } catch (e) { silCache = null; }
     return silCache;
@@ -410,6 +463,30 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
     let strict = null;
     try { strict = raw ? await measureBodyImage(photo.img) : { ok: false, skip_reason: 'no pose landmarks' }; }
     catch (e) { strict = { ok: false, skip_reason: String((e && e.message) || e) }; }
+    // Face anchor: expected body box from the 7.5-heads canon, then the
+    // validation gate — the detected pose bbox must land inside it
+    // (IoU + dimension ratios) or the read is flagged SUSPECT, not silent.
+    // No face -> no anchor -> full-frame behavior, noted on the card.
+    let face_anchor = null, anchor_check = null, anchor_note = null;
+    if (faces.length) {
+      $('runstate').textContent = 'deriving face anchor…';
+      try { face_anchor = await ensureFaceAnchor(faceA); }
+      catch (e) { face_anchor = null; }
+      if (face_anchor) {
+        const pts = raw.filter(p => p && isFinite(p.x) && isFinite(p.y));
+        const bb = pts.length ? pointsBbox(pts) : null;
+        if (bb) {
+          const detected = {
+            x1: bb.x1 * photo.w, y1: bb.y1 * photo.h,
+            x2: bb.x2 * photo.w, y2: bb.y2 * photo.h,
+          };
+          anchor_check = {
+            detected,
+            ...validateAgainstAnchor(face_anchor.expected, detected),
+          };
+        } else anchor_note = 'face anchor derived, but the pose has no finite landmarks to check against.';
+      } else anchor_note = 'face landmarks failed — body search ran full-frame.';
+    } else anchor_note = 'no face anchor — full-frame search.';
     return {
       pose_png_dataurl: buildBodyExportPng(),
       has_outline: false, // filled in if the user loads the outline via the toggle
@@ -420,6 +497,8 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       skip_reason: strict.ok ? null : (strict.skip_reason || 'pose incomplete'),
       silhouette: null, // lazy: populated by the outline toggle, not the run
       silhouette_error: 'pending',
+      silhouette_anchor: null, // lazy: contour loop pick vs the anchor, from the toggle
+      face_anchor, anchor_check, anchor_note,
       model: 'MediaPipe PoseLandmarker (pose_landmarker_lite, float16)',
       method: '33 landmarks → 9 segment lengths + 7 scale-invariant ratios (same definitions as the body-metrics lab); body outline = largest person-segment contour at 256px, loaded on demand',
     };
@@ -527,6 +606,11 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
         '</table>';
       h += '<p class="note">clothed-silhouette measurements — the outline traces clothing and hair, ' +
         'not the body underneath; the ratios are the comparable unit. ' + esc(s.model || '') + '.</p>';
+      if (r.silhouette_anchor) {
+        const ap = r.silhouette_anchor;
+        h += '<p class="note">face anchor: contour loop ' + (ap.index + 1) + ' of ' + ap.loops +
+          ' (IoU ' + ap.iou.toFixed(2) + ' vs the face-predicted body box) — picked by anchor overlap, not by size.</p>';
+      }
       inner = card('body silhouette', h);
     }
     else if (r.silhouette_error === 'pending')
@@ -583,6 +667,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
       faces = []; embedCache = {}; faceA = 0;
       poseRaw = null; poseTried = false; // fresh pose per photo
       silCache = null; silTried = false; // fresh silhouette per photo
+      anchorCache = {}; // fresh face anchor per photo
       lastBodyResult = null;
       bodyView = 'skeleton'; syncBodyViewCtl();
       if (!detectReady) {
@@ -657,6 +742,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
           rep.instruments.body_telemetry = r;
           lastBodyResult = r; // the outline toggle patches this in place
           html += renderBody(r, RATIO_KEYS, ratioLabel);
+          html += renderAnchor(r);
           html += renderSilhouette(r);
         } catch (e) {
           html += card('body telemetry', '<p class="note err">body telemetry failed: ' + esc(e.message || e) + '</p>');
@@ -735,6 +821,7 @@ import { computeFaceOverlayData, annotatedPngDataUrl } from './face-overlay.js';
         if (sil && sil.contour && lastBodyResult) {
           lastBodyResult.silhouette = silhouetteMetrics(sil.mask, sil.w, sil.h, poseRaw);
           lastBodyResult.silhouette_error = null;
+          lastBodyResult.silhouette_anchor = sil.anchorPick || null;
           lastBodyResult.has_outline = true;
           lastBodyResult.model += ' + ImageSegmenter (selfie_multiclass_256x256)';
           try { lastBodyResult.pose_png_dataurl = buildBodyExportPng(); } catch (e) {}
