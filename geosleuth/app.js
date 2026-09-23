@@ -1,9 +1,11 @@
 // app.js — GEOSLEUTH UI wiring. Imports pure logic from geo.js.
-import { CUES, CUE_BY_ID, CUE_GROUPS, scoreCues, regionRollup, parseExif, analyzePixels, suggestCues } from './geo.js';
+import { CUES, CUE_BY_ID, CUE_GROUPS, scoreCues, regionRollup, parseExif, analyzePixels, suggestCues, nearbyLandmarks, reverseGeocode } from './geo.js';
 
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const selected = new Set();
 let photoName = '', exif = null, heur = null, imgURL = null;
+let lmKey = '', landmarks = null, placeName = null; // landmark lookup state
 
 const SINGLE_GROUPS = new Set(['Driving']); // radio behavior
 
@@ -91,6 +93,9 @@ document.addEventListener('paste', e => {
 
 function loadFile(f) {
   photoName = f.name || 'pasted-image';
+  lmKey = ''; landmarks = null; placeName = null; // reset landmark lookup
+  $('landmarks').innerHTML = ''; $('landmarks').style.display = 'none';
+  $('mapwrap').style.display = 'none';
   if (imgURL) URL.revokeObjectURL(imgURL);
   imgURL = URL.createObjectURL(f);
   $('preview').src = imgURL;
@@ -134,6 +139,8 @@ function renderAuto() {
       mw.style.display = 'block';
       $('osm').src = `https://www.openstreetmap.org/export/embed.html?bbox=${exif.lon - d}%2C${exif.lat - d}%2C${exif.lon + d}%2C${exif.lat + d}&layer=mapnik&marker=${exif.lat}%2C${exif.lon}`;
       $('gmaps').href = `https://www.google.com/maps/search/?api=1&query=${exif.lat},${exif.lon}`;
+      const key = exif.lat + ',' + exif.lon;
+      if (key !== lmKey) { lmKey = key; lookupLandmarks(exif.lat, exif.lon); }
     } else if (exif.hasExif) {
       html += `<tr><td class="k">GPS</td><td class="dim">no coordinates — stripped by the sending app, most likely</td></tr>`;
     }
@@ -178,6 +185,42 @@ function renderAuto() {
   }
 }
 
+// ---- landmark lookup (auto-fires when GPS exists) ----
+async function lookupLandmarks(lat, lon) {
+  const box = $('landmarks');
+  box.style.display = 'block';
+  box.innerHTML = '<p class="dim">📍 checking the landmark database for this spot…</p>';
+  const [lm, geo] = await Promise.all([nearbyLandmarks(lat, lon), reverseGeocode(lat, lon)]);
+  landmarks = lm; placeName = geo;
+  renderLandmarks();
+}
+
+function renderLandmarks() {
+  const box = $('landmarks');
+  box.style.display = 'block';
+  let html = '';
+  if (placeName) html += `<div class="placename">📍 Taken near <strong>${esc(placeName.label)}</strong></div>`;
+  if (landmarks === null) {
+    html += '<p class="dim">Landmark database unreachable — re-drop the photo to retry.</p>';
+  } else if (!landmarks.length) {
+    html += '<p class="dim">No named landmarks within 10 km in the database.</p>';
+  } else {
+    html += '<div class="lmgrid">';
+    for (const l of landmarks) {
+      html += `<div class="lmcard">`
+        + (l.image
+          ? `<img loading="lazy" src="${esc(l.image)}?width=300" alt="">`
+          : `<div class="lmnoimg">no photo</div>`)
+        + `<div class="lmbody"><div class="lmname">${esc(l.name)}</div>`
+        + `<div class="dim small">${l.distKm != null ? l.distKm + ' km away' : 'nearby'}</div>`
+        + `<div class="small">${l.article ? `<a class="linkbtn" href="${esc(l.article)}" target="_blank" rel="noopener">Wikipedia ↗</a>` : ''}<a class="linkbtn" href="${esc(l.wikidataUrl)}" target="_blank" rel="noopener">Wikidata ↗</a></div>`
+        + `</div></div>`;
+    }
+    html += '</div>';
+  }
+  box.innerHTML = html;
+}
+
 // ---- report ----
 function buildMarkdown() {
   const ids = [...selected];
@@ -191,6 +234,11 @@ function buildMarkdown() {
     if (exif.make || exif.model) L.push(`- Camera: ${[exif.make, exif.model].filter(Boolean).join(' ')}`);
     if (exif.datetime) L.push(`- Taken: ${exif.datetime}`);
     if (exif.lat != null) L.push(`- GPS: ${exif.lat}, ${exif.lon}`);
+    if (placeName) L.push(`- Taken near: ${placeName.label}`);
+    if (landmarks && landmarks.length) {
+      L.push('', '## Nearby landmarks (Wikidata)', '');
+      landmarks.forEach(l => L.push(`- ${l.name}${l.distKm != null ? ` — ${l.distKm} km` : ''} (${l.wikidataUrl})`));
+    }
     L.push('');
   }
   if (heur) {

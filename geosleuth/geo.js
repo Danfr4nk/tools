@@ -363,3 +363,88 @@ export function suggestCues(h) {
   if (!h.night && h.bright > 0.55 && h.warm > 0.08) s.push({ id: 'auto-sun', label: 'Harsh warm sunlight', cues: ['veg-desert', 'veg-scrub', 'veg-palms'] });
   return s;
 }
+
+// ---------------------------------------------------------------------------
+// Landmark lookup (network). Fires automatically when GPS coordinates exist.
+// Wikidata: named places with coordinates near the photo, ranked by distance.
+// Nominatim: human-readable place name for the coordinates.
+// Both are free, keyless, CORS-enabled. Failures resolve to null — never throw.
+// ---------------------------------------------------------------------------
+function fetchJson(url, ms, extraHeaders) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  // NOTE: browsers ignore a manual User-Agent (forbidden header) and send
+  // their own, which is fine. In node the UA below keeps Wikidata/Nominatim happy.
+  const headers = Object.assign({ 'Accept': 'application/json', 'User-Agent': 'GEOSLEUTH/1.0 (photo location tool)' }, extraHeaders);
+  return fetch(url, { signal: c.signal, headers })
+    .then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+    .finally(() => clearTimeout(t));
+}
+
+// Named places near (lat, lon), closest first. Prefers entries with a photo
+// or a Wikipedia article — those are the recognizable landmarks, not random
+// address nodes. Resolves to an array (possibly empty) or null on failure.
+export async function nearbyLandmarks(lat, lon, radiusKm = 10, limit = 12) {
+  const around = `SERVICE wikibase:around {
+    ?item wdt:P625 ?coord.
+    bd:serviceParam wikibase:center "Point(${lon} ${lat})"^^geo:wktLiteral.
+    bd:serviceParam wikibase:radius "${radiusKm}".
+    bd:serviceParam wikibase:distance ?dist.
+  }`;
+  const strict = `SELECT ?item ?itemLabel ?coord ?dist ?image ?article WHERE {
+  ${around}
+  OPTIONAL { ?item wdt:P18 ?image. }
+  OPTIONAL { ?article schema:about ?item; schema:isPartOf <https://en.wikipedia.org/>. }
+  FILTER(BOUND(?image) || BOUND(?article))
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+ORDER BY ?dist
+LIMIT 60`;
+  const loose = strict.replace('FILTER(BOUND(?image) || BOUND(?article))\n  ', '');
+  let rows = await sparqlRows(strict);
+  if (rows === null) return null;                    // service down — not "no results"
+  if (rows.length < 3) rows = await sparqlRows(loose) || rows;
+  const out = [];
+  for (const b of rows) {
+    const name = b.itemLabel && b.itemLabel.value;
+    const m = b.coord && /^Point\(([-\d.]+) ([-\d.]+)\)$/.exec(b.coord.value);
+    if (!name || !m || /^Q\d+$/.test(name)) continue;
+    const qid = b.item.value.split('/').pop();
+    out.push({
+      qid, name,
+      distKm: b.dist ? +(+b.dist.value).toFixed(2) : null,
+      lat: +m[2], lon: +m[1],
+      image: b.image ? b.image.value : null,
+      article: b.article ? b.article.value : null,
+      wikidataUrl: 'https://www.wikidata.org/wiki/' + qid,
+    });
+  }
+  // recognizable first (photo or article), then by distance
+  out.sort((a, b) => ((b.image || b.article) ? 0 : 1) - ((a.image || a.article) ? 0 : 1)
+    || (a.distKm ?? 1e9) - (b.distKm ?? 1e9));
+  return out.slice(0, limit);
+}
+
+async function sparqlRows(q) {
+  const url = 'https://query.wikidata.org/sparql?query=' + encodeURIComponent(q) + '&format=json';
+  let data;
+  try { data = await fetchJson(url, 30000); }
+  catch (e) { return null; }
+  return (data.results && data.results.bindings) || [];
+}
+
+// Human-readable place name for coordinates ("Shibuya, Tokyo, Japan").
+// Resolves to { label, city, country } or null on failure.
+export async function reverseGeocode(lat, lon) {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=jsonv2&zoom=14`;
+  let d;
+  try { d = await fetchJson(url, 30000); }
+  catch (e) { return null; }
+  if (!d || !d.display_name) return null;
+  const a = d.address || {};
+  return {
+    label: d.display_name.split(',').slice(0, 4).join(','),
+    city: a.city || a.town || a.village || a.suburb || a.county || null,
+    country: a.country || null,
+  };
+}
