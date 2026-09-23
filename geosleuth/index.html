@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEOSLEUTH — where was this photo taken?</title>
+<link rel="stylesheet" href="style.css?v=20260922a">
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="../">← tools</a>
+  <h1>GEOSLEUTH</h1>
+  <p class="dim">Drop in a photo. It reads the EXIF, scans the pixels, and scores
+     what you can see against 51 countries — then tells you where it thinks you are.</p>
+
+  <section id="dropzone" tabindex="0" aria-label="drop a photo here">
+    <div id="dz-inner">
+      <div class="dz-icon">📷</div>
+      <div><strong>Drop a photo here</strong> — or click / paste one in</div>
+      <div class="dim small">JPEG keeps EXIF (GPS, timestamp, camera). PNG works too, minus EXIF.</div>
+    </div>
+    <input type="file" id="filepick" accept="image/*" hidden>
+  </section>
+  <div id="previewrow" style="display:none">
+    <img id="preview" alt="uploaded photo">
+    <div class="dim small" id="filemeta"></div>
+  </div>
+
+  <h2>Auto scan</h2>
+  <div id="auto" class="panel"><p class="dim">No photo yet.</p></div>
+  <div id="mapwrap" style="display:none">
+    <iframe id="osm" title="photo location map" loading="lazy"></iframe>
+    <div class="row"><a id="gmaps" class="linkbtn" href="#" target="_blank" rel="noopener">open in Google Maps ↗</a></div>
+  </div>
+
+  <h2>What can you see?</h2>
+  <p class="dim small">Tap everything that applies. The verdict re-scores live — hard cues (script, driving side) weigh the most.</p>
+  <div id="suggest" style="display:none"></div>
+  <div id="cues"></div>
+  <div class="row">
+    <input id="transcribe" type="text" placeholder="Transcribe any visible text — shop names, plates, signs…" autocomplete="off" spellcheck="false">
+  </div>
+
+  <h2>Verdict</h2>
+  <div id="verdict" class="panel"><p class="dim">Pick at least 3 cues above.</p></div>
+
+  <h2>Report</h2>
+  <div class="row">
+    <button id="copymd" class="ghost">copy report (markdown)</button>
+    <button id="dljson" class="ghost">download JSON</button>
+  </div>
+  <p class="dim small">Reverse image search — drag the photo into any of these:</p>
+  <div class="row">
+    <a class="linkbtn" href="https://lens.google.com/" target="_blank" rel="noopener">Google Lens ↗</a>
+    <a class="linkbtn" href="https://tineye.com/" target="_blank" rel="noopener">TinEye ↗</a>
+    <a class="linkbtn" href="https://yandex.com/images/" target="_blank" rel="noopener">Yandex Images ↗</a>
+  </div>
+  <p class="foot dim">GEOSLEUTH scores visible cues against a 51-country knowledge base. It's a narrowing tool, not a verdict — confirm with reverse image search before treating a location as fact.</p>
+</div>
+<script type="module" src="app.js?v=20260922a"></script>
+</body>
+</html>
