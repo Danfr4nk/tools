@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sc2mp3 — SoundCloud URL → MP3</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#101216; color:#e8eaf0; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:40px 20px; }
+  .wrap { max-width:620px; margin:0 auto; }
+  h1 { font-size:26px; margin:0 0 4px; }
+  h1 .mp3 { color:#ff7700; }
+  p.dim { color:#9aa0ad; font-size:14px; margin:0 0 18px; }
+  .row { display:flex; gap:8px; margin-bottom:18px; }
+  input[type=text] { flex:1; background:#181b21; border:1px solid #2a2e37; border-radius:10px; color:#e8eaf0; padding:12px 14px; font-size:15px; }
+  input[type=text]:focus { outline:none; border-color:#ff7700; }
+  button { background:#ff7700; color:#111; border:0; border-radius:10px; padding:12px 20px; font-size:15px; font-weight:700; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.ghost { background:#23262e; color:#e8eaf0; font-weight:600; }
+  #setup { border:1px solid #5a3a1a; background:#1d1712; border-radius:12px; padding:16px 18px; margin-bottom:18px; font-size:14px; line-height:1.65; }
+  #setup code { background:#0d0f13; padding:2px 7px; border-radius:6px; font-size:13px; }
+  #setup b { color:#ffb066; }
+  .track { border:1px solid #2a2e37; border-radius:12px; padding:14px 16px; margin:10px 0; background:#181b21; }
+  .track .t { font-size:15px; font-weight:600; }
+  .track .m { color:#9aa0ad; font-size:13px; margin-top:3px; }
+  .track .bar { height:6px; background:#0d0f13; border-radius:4px; margin-top:10px; overflow:hidden; display:none; }
+  .track .bar i { display:block; height:100%; width:0; background:#ff7700; border-radius:4px; transition:width .3s; }
+  .track .actions { margin-top:10px; display:flex; gap:8px; align-items:center; }
+  .track .pct { color:#9aa0ad; font-size:13px; min-width:44px; }
+  .track a.dl { color:#61afef; font-size:14px; font-weight:600; }
+  .track .err { color:#ff6b6b; font-size:13px; margin-top:8px; }
+  .plhead { font-size:14px; color:#9aa0ad; margin:14px 0 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>sc<span class="mp3">2</span>mp3</h1>
+  <p class="dim">SoundCloud URL in, MP3 out. Tracks and sets/playlists both work.</p>
+
+  <div id="setup" hidden>
+    <b>The local server isn't running.</b> This page needs its tiny backend:<br><br>
+    <code>pip install yt-dlp</code> &nbsp;·&nbsp; install <code>ffmpeg</code><br>
+    <code>cd sc2mp3 &amp;&amp; python3 server.py</code><br><br>
+    It'll open itself at <code>http://127.0.0.1:8765</code>. Nothing leaves your machine.
+  </div>
+
+  <div class="row">
+    <input id="url" type="text" placeholder="https://soundcloud.com/artist/track" autocomplete="off" spellcheck="false">
+    <button id="go">load</button>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<script>
+const BASE = (location.hostname === '127.0.0.1' || location.hostname === 'localhost')
+  ? '' : 'http://127.0.0.1:8765';
+
+async function api(path, body) {
+  const r = await fetch(BASE + path, {
+    method: body ? 'POST' : 'GET',
+    headers: body ? {'Content-Type': 'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return r.json();
+}
+
+function fmtDur(s) {
+  if (!s && s !== 0) return '';
+  s = Math.round(s);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function trackEl(t) {
+  const d = document.createElement('div');
+  d.className = 'track';
+  d.innerHTML =
+    '<div class="t">' + esc(t.title) + '</div>' +
+    (t.duration ? '<div class="m">' + fmtDur(t.duration) + '</div>' : '') +
+    '<div class="bar"><i></i></div>' +
+    '<div class="actions"><button class="ghost">get mp3</button><span class="pct"></span></div>';
+  const btn = d.querySelector('button'), bar = d.querySelector('.bar'),
+        fill = d.querySelector('.bar i'), pct = d.querySelector('.pct'),
+        actions = d.querySelector('.actions');
+  btn.onclick = async () => {
+    btn.disabled = true; bar.style.display = 'block';
+    let job;
+    try { job = await api('/api/start', {url: t.url}); }
+    catch (e) { return fail('server unreachable — is server.py running?'); }
+    if (job.error) return fail(job.error);
+    const tick = async () => {
+      let st;
+      try { st = await api('/api/status?job=' + job.job); }
+      catch (e) { return fail('lost the server mid-download'); }
+      if (st.error) return fail(st.error);
+      fill.style.width = (st.pct || 0) + '%';
+      pct.textContent = Math.round(st.pct || 0) + '%' + (st.note ? ' · ' + esc(st.note) : '');
+      if (st.state === 'done') {
+        const mb = st.size ? ' · ' + (st.size / 1048576).toFixed(1) + ' MB' : '';
+        actions.innerHTML = '<a class="dl" href="' + BASE + '/api/file?job=' + job.job + '">⬇ download ' + esc(st.filename) + '</a><span class="m">' + mb + '</span>';
+      } else if (st.state === 'error') {
+        fail(st.error || 'conversion failed');
+      } else {
+        setTimeout(tick, 800);
+      }
+    };
+    const fail = (msg) => {
+      btn.disabled = false;
+      let e = d.querySelector('.err');
+      if (!e) { e = document.createElement('div'); e.className = 'err'; d.appendChild(e); }
+      e.textContent = msg;
+    };
+    tick();
+  };
+  return d;
+}
+
+document.getElementById('go').onclick = async () => {
+  const url = document.getElementById('url').value.trim();
+  const out = document.getElementById('out');
+  if (!url) return;
+  out.innerHTML = '<p class="dim">reading…</p>';
+  let r;
+  try { r = await api('/api/resolve', {url}); }
+  catch (e) { document.getElementById('setup').hidden = false; out.innerHTML = ''; return; }
+  if (r.error) { out.innerHTML = '<div class="track"><div class="err">' + esc(r.error) + '</div></div>'; return; }
+  out.innerHTML = '';
+  if (r.kind === 'playlist') {
+    const h = document.createElement('div');
+    h.className = 'plhead';
+    h.textContent = r.title + ' — ' + r.count + ' tracks. Hit "get mp3" on whichever you want.';
+    out.appendChild(h);
+    r.tracks.forEach(t => out.appendChild(trackEl(t)));
+  } else {
+    const h = document.createElement('div');
+    h.className = 'plhead';
+    h.textContent = (r.uploader ? r.uploader + ' — ' : '') + 'one track, ready when you are.';
+    out.appendChild(h);
+    out.appendChild(trackEl(r));
+  }
+};
+document.getElementById('url').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('go').click();
+});
+
+// reveal the setup panel immediately if no backend is listening
+api('/api/ping').catch(() => { document.getElementById('setup').hidden = false; });
+</script>
+</body>
+</html>
