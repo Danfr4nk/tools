@@ -21,6 +21,15 @@ select { background:#1d2129; color:#e8eaf0; border:1px solid #333a47; border-rad
 .seg .bars:last-child { border-radius:0 8px 8px 0; }
 #cards { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:18px 0; }
 #cards.eight { grid-template-columns:repeat(4,1fr); }
+/* extract panel */
+#extractpanel { background:#14171d; border:1px solid #2a2e37; border-radius:12px; padding:12px 14px; }
+#extractpanel .extrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+#exturl { flex:1; min-width:200px; background:#1d2129; color:#e8eaf0; border:1px solid #333a47; border-radius:10px; padding:10px 12px; font-size:14px; }
+button.ghost { font-size:13px; padding:7px 12px; border-radius:8px; }
+button.ghost.active { border-color:#61afef; color:#61afef; }
+#extstatus { font-size:13px; color:#9aa0ad; margin:8px 0 0; min-height:18px; }
+#extchips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+#extchips:empty { margin-top:0; }
 .card { background:#181b21; border:1px solid #2a2e37; border-radius:12px; padding:14px 10px; text-align:center; position:relative; }
 .card.playing { border-color:#61afef; }
 .card.locked { border-color:#c678dd; }

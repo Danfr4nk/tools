@@ -5,19 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PROGRESSIONS — chord loops in your lanes</title>
 <link rel="stylesheet" href="style.css?v=20260922a">
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
 </head>
 <body>
 <div class="wrap">
   <a class="back" href="../">← music</a>
   <h1>PROGRESSIONS</h1>
   <p class="dim">Chord loops generated in the harmonic lanes of the three you named —
-     pick one, hit generate, play it, take the MIDI.</p>
+     pick one, hit generate, play it, take the MIDI. Or extract the chords
+     from any TheoryTab and play them as any lane.</p>
 
   <div class="row styles">
     <button class="style on" data-style="nimino">nimino</button>
     <button class="style" data-style="oskar">oskar med k</button>
     <button class="style" data-style="lyny">LYNY</button>
     <button class="style" data-style="classics">CLASSICS</button>
+    <button class="style" data-style="extracted">🔍 extract</button>
+  </div>
+  <div id="extractpanel" style="display:none">
+    <div class="extrow">
+      <input id="exturl" type="text" placeholder="TheoryTab URL or tab ID — e.g. radiohead/creep" autocomplete="off" spellcheck="false">
+      <button id="extload" class="ghost">extract</button>
+    </div>
+    <div id="extchips"></div>
+    <p id="extstatus"></p>
   </div>
   <div class="row">
     <select id="classicpick" style="display:none" aria-label="pick a classic progression"></select>
@@ -62,8 +73,9 @@
      Bass follows each lane's pattern — garage 2-step, warm sustain with
      a fifth swell, or long 808-style sub with glide. Lock any chord and
      hit generate to reroll the rest. Pick a CLASSIC progression and play
-     it as any lane. The MIDI drops straight into GarageBand or any DAW.</p>
+     it as any lane. Paste a TheoryTab URL to extract a real song's chords
+     and voice them through any lane. The MIDI drops straight into GarageBand or any DAW.</p>
 </div>
-<script type="module" src="app.js?v=20260922c"></script>
+<script type="module" src="app.js?v=20260922d"></script>
 </body>
 </html>

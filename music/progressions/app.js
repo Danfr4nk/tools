@@ -1,8 +1,9 @@
 // app.js — PROGRESSIONS UI: generate, audition (WebAudio), export MIDI.
 // v2: stereo mix + compressor, humanized timing, 808 glide on the LYNY sub,
 // chord locks, 4/8 bar toggle with turnaround.
-import { generateProgression, generateClassic, CLASSICS, CLASSIC_FAMS, STYLE_KEYS, STYLE_META } from './progs.js';
+import { generateProgression, generateClassic, generateExtracted, CLASSICS, CLASSIC_FAMS, STYLE_KEYS, STYLE_META } from './progs.js';
 import { writeMidi } from './midi.js';
+import { loadExtractSections, extractSectionChords } from './extract.js';
 
 const ROOTS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -11,6 +12,8 @@ const midiName = m => NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1);
 let style = 'nimino';
 let classicId = 'levels';
 let classicStyle = null; // null = the classic's own default flavor
+let extData = null;      // last hook2piano extraction {title,keyPc,mode,tempo,chords,total}
+let extStyle = null;     // "play it as" lane for the extraction (null = nimino)
 let bars = 4;
 let locks = []; // locked chord objects per position, or null
 let prog = null;
@@ -34,14 +37,18 @@ document.querySelectorAll('.style').forEach(b => {
     b.classList.add('on');
     style = b.dataset.style;
     const isClassics = style === 'classics';
+    const isExtracted = style === 'extracted';
     $('classicpick').style.display = isClassics ? '' : 'none';
-    $('classicstyles').style.display = isClassics ? '' : 'none';
-    if (!isClassics) {
-      tempoSl.value = STYLE_META[style].tempo;
-    } else {
+    $('classicstyles').style.display = (isClassics || isExtracted) ? '' : 'none';
+    $('extractpanel').style.display = isExtracted ? '' : 'none';
+    if (isClassics) {
       const c = CLASSICS.find(e => e.id === classicId);
       tempoSl.value = c.bpm;
       modeSel.value = c.mode;
+    } else if (isExtracted) {
+      if (!extData) return; // panel is showing; extraction comes next
+    } else {
+      tempoSl.value = STYLE_META[style].tempo;
     }
     $('bpmval').textContent = tempoSl.value;
     locks = [];
@@ -76,15 +83,82 @@ document.querySelectorAll('.style').forEach(b => {
   };
 }
 
+// ---- chord extraction (hook2piano bridge) ----
+function setExtStatus(t) { $('extstatus').textContent = t || ''; }
+
+function renderExtChips(sections) {
+  const box = $('extchips');
+  box.innerHTML = '';
+  sections.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = s.name;
+    b.onclick = () => selectExtSection(s, box.children, i);
+    box.appendChild(b);
+  });
+}
+
+async function selectExtSection(s, chips, idx) {
+  [...chips].forEach((b, j) => b.classList.toggle('active', j === idx));
+  $('extload').disabled = true;
+  try {
+    const data = await extractSectionChords(s.name, s.tid, setExtStatus);
+    extData = data;
+    extStyle = null; // back to nimino voicing
+    keySel.value = data.keyPc;
+    modeSel.value = data.mode;
+    tempoSl.value = Math.min(150, Math.max(90, data.tempo));
+    $('bpmval').textContent = tempoSl.value;
+    // bars toggle follows the section length
+    bars = data.bars <= 4 ? 4 : 8;
+    document.querySelectorAll('.bars').forEach(x =>
+      x.classList.toggle('on', +x.dataset.bars === bars));
+    locks = [];
+    generate();
+    setExtStatus(data.truncated
+      ? `loaded first 8 of ${data.total} bars: ${data.title}`
+      : `loaded ${data.bars} bars: ${data.title}`);
+  } catch (e) {
+    setExtStatus('error: ' + e.message);
+  } finally {
+    $('extload').disabled = false;
+  }
+}
+
+$('extload').onclick = async () => {
+  const btn = $('extload');
+  btn.disabled = true;
+  $('extchips').innerHTML = '';
+  try {
+    setExtStatus('reading TheoryTab\u2026');
+    const sections = await loadExtractSections($('exturl').value);
+    renderExtChips(sections);
+    if (sections.length === 1) {
+      await selectExtSection(sections[0], $('extchips').children, 0);
+    } else {
+      setExtStatus('pick a section');
+    }
+  } catch (e) {
+    setExtStatus('error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+};
+$('exturl').addEventListener('keydown', e => { if (e.key === 'Enter') $('extload').click(); });
+
 // "play it as" — switch which lane's voicing/bass/swing plays the classic
+// or the extracted progression
 function syncCstyleButtons() {
   document.querySelectorAll('.cstyle').forEach(x => {
-    x.classList.toggle('on', !!prog && prog.styleKey === 'classics' && x.dataset.cstyle === prog.voicingStyle);
+    const on = !!prog && (prog.styleKey === 'classics' || prog.styleKey === 'extracted')
+      && x.dataset.cstyle === prog.voicingStyle;
+    x.classList.toggle('on', on);
   });
 }
 document.querySelectorAll('.cstyle').forEach(b => {
   b.onclick = () => {
-    classicStyle = b.dataset.cstyle;
+    if (style === 'extracted') extStyle = b.dataset.cstyle;
+    else classicStyle = b.dataset.cstyle;
     locks = [];
     generate();
   };
@@ -121,6 +195,22 @@ function generate() {
     prog = generateClassic(classicId, {
       keyPc: +keySel.value, tempo: +tempoSl.value, bars, locked,
       styleKey: classicStyle || undefined,
+    });
+  } else if (style === 'extracted') {
+    if (!extData) return; // nothing extracted yet; panel is showing
+    const n = Math.min(bars, extData.chords.length);
+    // transpose the extraction to the selected key (romans are relative,
+    // so they stay put while the roots shift)
+    const delta = (((+keySel.value - extData.keyPc) % 12) + 12) % 12;
+    const shifted = extData.chords.slice(0, n).map(ec => ({
+      ...ec, rootPc: (ec.rootPc + delta) % 12,
+    }));
+    prog = generateExtracted(shifted, {
+      keyPc: +keySel.value,
+      mode: modeSel.value === 'auto' ? extData.mode : modeSel.value,
+      tempo: +tempoSl.value, locked,
+      styleKey: extStyle || undefined,
+      title: extData.title,
     });
   } else {
     prog = generateProgression(style, {
@@ -159,7 +249,9 @@ function renderCards() {
   meta.className = 'meta';
   const laneName = prog.styleKey === 'classics'
     ? `CLASSICS · ${prog.classicFam} · as ${prog.voicingLabel}`
-    : `${prog.style} lane`;
+    : prog.styleKey === 'extracted'
+      ? `EXTRACTED · ${prog.extTitle} · as ${prog.voicingLabel}`
+      : `${prog.style} lane`;
   meta.textContent = `${laneName} · ${prog.keyName} ${prog.mode === 'min' ? 'minor' : 'major'} · ${prog.tempo} BPM · ${prog.bars} bars`;
   wrap.appendChild(meta);
 }
@@ -394,6 +486,7 @@ if (location.search.includes('debug')) {
     get src() { return drumsSrc; },
     get prog() { return prog; },
     get on() { return drumsOn; },
+    get ext() { return extData; },
     constants: { DRUMS_BPM, DRUMS_LOOP_START, DRUMS_LOOP_END },
   };
 }

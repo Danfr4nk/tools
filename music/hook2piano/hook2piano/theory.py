@@ -322,7 +322,8 @@ def chord_tones(key, chord, prefer_flats=False):
     if not tones:
         warnings.append("chord has no tones after omits")
         return {"tones": [], "bass": None, "label": "N.C.",
-                "roman": "", "warnings": warnings}
+                "roman": "", "root_pc": None, "fam": "maj",
+                "warnings": warnings}
     bass_idx = inversion % len(tones)
     bass_midi = tones[bass_idx][0]
 
@@ -345,8 +346,13 @@ def chord_tones(key, chord, prefer_flats=False):
             name, _ = key.spell(deg, acc)
             named.append((midi, name))
     bass_name_full = midi_to_name(bass_midi)
+    # simplified family for lane-style re-voicing (major/minor/seventh only):
+    # the third decides; diminished reads as minor, augmented as major.
+    fam = "min" if (quality.startswith("min") or quality.startswith("dim")) else "maj"
     return {"tones": named, "bass": (bass_midi, bass_name_full),
-            "label": label, "roman": roman, "warnings": warnings}
+            "label": label, "roman": roman,
+            "root_pc": root_midi % 12, "fam": fam,
+            "warnings": warnings}
 
 
 def _chord_label(root_name, quality, ctype, has_sus, suspensions, added,

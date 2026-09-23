@@ -21,6 +21,8 @@ class ChordEvent:
     lh_midis: list      # piano LH voicing: [bass, ...close position above]
     flats: bool = False
     warnings: list = field(default_factory=list)
+    root_pc: int | None = None  # absolute pitch class of the chord root
+    fam: str = "maj"            # simplified family for re-voicing: maj|min
 
 
 @dataclass
@@ -109,7 +111,8 @@ def parse_section(name, project):
             beat=float(c["beat"]), duration=float(c["duration"]),
             label=ct["label"], roman=ct["roman"],
             bass_midi=bass_midi, tone_midis=tone_midis,
-            lh_midis=lh, flats=flats, warnings=ct["warnings"]))
+            lh_midis=lh, flats=flats, warnings=ct["warnings"],
+            root_pc=ct["root_pc"], fam=ct["fam"]))
 
     notes = []
     for n in project.get("notes", []):
@@ -159,6 +162,7 @@ def split_measures(section):
                     mch.append({
                         "beat": round(start, 6), "dur": round(dur, 6),
                         "label": c.label, "roman": c.roman,
+                        "rootPc": c.root_pc, "fam": c.fam,
                         "midis": c.lh_midis,
                         "vfkeys": [list(vf_key(mm, c.flats))
                                    for mm in c.lh_midis],

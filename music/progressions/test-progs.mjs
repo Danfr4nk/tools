@@ -1,6 +1,6 @@
 // test-progs.mjs — node test for the progression generator + MIDI writer.
 // Must print PASS lines; any FAIL exits nonzero.
-import { generateProgression, generateClassic, CLASSICS, STYLE_KEYS } from './progs.js';
+import { generateProgression, generateClassic, generateExtracted, CLASSICS, STYLE_KEYS } from './progs.js';
 import { writeMidi, parseMidiInfo } from './midi.js';
 
 let fails = 0;
@@ -104,6 +104,49 @@ ok(CLASSICS.length >= 50, `CLASSICS library has ${CLASSICS.length} entries (>= 5
   ok(rom(lvN) === rom(lvO) && rom(lvO) === rom(lvL), `style switch keeps the progression (${rom(lvN)})`);
   const sw = generateClassic('sensitive-female', { keyPc: 0, seed: 4, styleKey: 'nimino' });
   ok(sw.swing === 0.12, 'style switch brings the lane swing (nimino 0.12)');
+}
+
+// ---- EXTRACTED progressions (hook2piano bridge) ----
+{
+  // Creep verse as extracted by hook2piano: G Bm C Cm in G major
+  const creep = [
+    { rootPc: 7, fam: 'maj', roman: 'I', name: 'G' },
+    { rootPc: 11, fam: 'min', roman: 'iii', name: 'Bm' },
+    { rootPc: 0, fam: 'maj', roman: 'IV', name: 'C' },
+    { rootPc: 0, fam: 'min', roman: 'iv (bor. minor)', name: 'Cm' },
+  ];
+  const p = generateExtracted(creep, { seed: 1, keyPc: 7, mode: 'maj', tempo: 92, title: 'Creep — Verse' });
+  ok(p.styleKey === 'extracted', 'extracted styleKey set');
+  ok(p.chords.length === 4, 'extracted: 4 chords');
+  ok(p.chords.every((c, i) => c.root === creep[i].rootPc), 'extracted: roots preserved');
+  ok(p.chords.map(c => c.roman).join('|') === 'I|iii|IV|iv (bor. minor)', 'extracted: romans preserved');
+  ok(p.chords.every(c => c.notes.every(n => n >= 52 && n <= 79)), 'extracted: pads in sweet register');
+  ok(p.chords.every(c => c.bass >= 28 && c.bass <= 48), 'extracted: bass in sub range');
+  ok(p.chords.every(c => SIMPLE.test(c.name)), `extracted: triads/7ths only (${p.chords.map(c => c.name).join(' ')})`);
+  ok(p.tempo === 92 && p.keyName === 'G' && p.extTitle === 'Creep — Verse', 'extracted: meta carried through');
+  // re-voicing through another lane keeps the harmony, changes the flavor
+  const pl = generateExtracted(creep, { seed: 1, styleKey: 'lyny' });
+  ok(pl.voicingStyle === 'lyny' && pl.bassStyle === 'sub', 'extracted as LYNY = sub bass');
+  ok(pl.chords.every((c, i) => c.root === creep[i].rootPc), 're-voiced: roots still preserved');
+  ok(pl.chords.map(c => c.roman).join('|') === p.chords.map(c => c.roman).join('|'), 're-voiced: romans unchanged');
+  // determinism
+  const p2 = generateExtracted(creep, { seed: 1, keyPc: 7, mode: 'maj' });
+  ok(p2.chords.every((c, i) => c.notes.join(',') === p.chords[i].notes.join(',')),
+    'extracted: same seed -> identical voicing');
+  // locks
+  const lk = generateExtracted(creep, { seed: 1, locked: [null, p.chords[1], null, null] });
+  ok(lk.chords[1].notes.join(',') === p.chords[1].notes.join(','), 'extracted: locked chord preserved');
+  // MIDI round-trips
+  const eb = writeMidi({ tempo: p.tempo, chords: p.chords, bassPattern: p.bassPattern, arp: true });
+  const ei = parseMidiInfo(eb);
+  ok(ei.noteOns === ei.noteOffs && ei.noteOns > 12, 'extracted MIDI round-trips');
+  // empty extraction throws
+  let ethrew = false;
+  try { generateExtracted([], {}); } catch { ethrew = true; }
+  ok(ethrew, 'generateExtracted([]) throws');
+  // build() refactor regression: classic still voices through buildFrom
+  const lv = generateClassic('levels', { keyPc: 7, seed: 11 });
+  ok(lv.chords.map(c => c.roman).join(' ') === 'i bIII bVII bVI', 'build refactor: levels romans intact');
 }
 
 // unknown style throws

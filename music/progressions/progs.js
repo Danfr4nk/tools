@@ -201,15 +201,20 @@ function makeChordBuilder({ keyPc, mode, extTable, rng, vMaj = false }) {
       const p = parseSpec(spec, keyPc, mode);
       let { root, fam, roman: romanStr } = p;
       if ((vMaj || vMajOnce) && p.deg === 5 && !p.acc) { fam = 'maj'; romanStr = 'V'; }
+      return this.buildFrom(root, fam, romanStr);
+    },
+    // voice an explicit root + family (used for extracted progressions,
+    // where the harmony comes from outside the spec system)
+    buildFrom(rootPc, fam, romanStr) {
       const quality = pickWeighted(rng, extTable[fam]);
-      const pcs = QUALITY_IV[quality].map(s => (root + s) % 12);
+      const pcs = QUALITY_IV[quality].map(s => (rootPc + s) % 12);
       const notes = voiceChord(pcs, prev);
       prev = notes;
       return {
         roman: romanStr,
-        name: ROOTS[root] + QUALITY_SFX[quality],
-        root, quality, notes,
-        bass: bassMidi(root, 0),
+        name: ROOTS[rootPc] + QUALITY_SFX[quality],
+        root: rootPc, quality, notes,
+        bass: bassMidi(rootPc, 0),
       };
     },
   };
@@ -383,3 +388,41 @@ export function generateClassic(id, opts = {}) {
 }
 
 export const CLASSIC_FAMS = [...new Set(CLASSICS.map(c => c.fam))];
+
+// ---- EXTRACTED: progressions pulled from real songs (hook2piano) ----
+// extChords: [{rootPc, fam ('maj'|'min'), roman, name}] — the harmony is
+// fixed, the lane supplies voicing/bass/swing, exactly like CLASSICS.
+// The raw extraction is kept on prog.extracted so "play it as" can re-voice
+// it through any lane without re-fetching.
+export function generateExtracted(extChords, opts = {}) {
+  if (!extChords || !extChords.length) throw new Error('generateExtracted: no chords');
+  const laneKey = opts.styleKey || 'nimino';
+  const lane = STYLES[laneKey];
+  if (!lane) throw new Error('unknown styleKey: ' + opts.styleKey);
+  const rng = mulberry32(opts.seed ?? ((Math.random() * 1e9) | 0));
+  const bars = extChords.length;
+  const locked = opts.locked || [];
+  const keyPc = opts.keyPc ?? 0;
+
+  const chords = [];
+  const cb = makeChordBuilder({ keyPc, mode: 'min', extTable: lane.ext, rng });
+  for (let b = 0; b < bars; b++) {
+    if (locked[b]) { chords.push(locked[b]); cb.setPrev(locked[b].notes); continue; }
+    const ec = extChords[b];
+    chords.push(cb.buildFrom(ec.rootPc, ec.fam, ec.roman));
+  }
+  // display names come from the extraction; voicing names from the lane build
+  chords.forEach((ch, i) => { ch.name = extChords[i].name || ch.name; });
+  return {
+    style: opts.name || 'Extracted', styleKey: 'extracted',
+    extracted: extChords,
+    extKeyPc: keyPc, extTitle: opts.title || '',
+    voicingStyle: laneKey, voicingLabel: lane.label,
+    keyName: ROOTS[keyPc], keyPc, mode: opts.mode || 'min',
+    tempo: opts.tempo ?? 120,
+    swing: lane.swing,
+    bars, chords,
+    bassPattern: BASS_PATTERNS[lane.bass],
+    bassStyle: lane.bass,
+  };
+}
