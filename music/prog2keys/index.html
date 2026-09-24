@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prog2keys — chords → piano keys</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#101216; color:#e8eaf0; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:36px 20px 60px; }
+  .wrap { max-width:920px; margin:0 auto; }
+  h1 { font-size:26px; margin:0 0 4px; }
+  h1 .k { color:#ff9f43; }
+  p.dim { color:#9aa0ad; font-size:14px; margin:0 0 16px; }
+  #prog { width:100%; box-sizing:border-box; background:#181b21; border:1px solid #2a2e37; border-radius:10px; color:#e8eaf0; padding:13px 15px; font-size:17px; font-family:ui-monospace,monospace; }
+  #prog:focus { outline:none; border-color:#ff9f43; }
+  .presets { margin:10px 0 4px; font-size:13px; color:#7a8191; }
+  .presets a { color:#7a8191; text-decoration:underline dotted; text-underline-offset:3px; margin-right:14px; cursor:pointer; }
+  .presets a:hover { color:#ff9f43; }
+  #chips { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 6px; min-height:40px; }
+  .chip { background:#181b21; border:1px solid #2a2e37; color:#e8eaf0; border-radius:999px; padding:9px 16px; font-size:15px; font-family:ui-monospace,monospace; cursor:pointer; }
+  .chip:hover { border-color:#ff9f43; }
+  .chip.sel { background:#ff9f43; border-color:#ff9f43; color:#14100a; font-weight:700; }
+  .chip.bad { border-color:#5a2020; color:#ff6b6b; cursor:help; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:14px 0 6px; font-size:14px; color:#9aa0ad; }
+  .controls .grp { display:flex; align-items:center; gap:6px; background:#181b21; border:1px solid #2a2e37; border-radius:10px; padding:6px 10px; }
+  .controls button { background:#23262e; color:#e8eaf0; border:0; border-radius:7px; padding:6px 12px; font-size:14px; cursor:pointer; }
+  .controls button:hover { background:#2e323c; }
+  .controls .lbl { min-width:34px; text-align:center; font-family:ui-monospace,monospace; color:#e8eaf0; }
+  .controls input[type=number] { width:52px; background:#0d0f13; border:1px solid #2a2e37; color:#e8eaf0; border-radius:6px; padding:5px 7px; font-size:14px; }
+  .controls select { background:#0d0f13; border:1px solid #2a2e37; color:#e8eaf0; border-radius:6px; padding:5px 7px; font-size:14px; }
+  #playAll { background:#ff9f43; color:#14100a; font-weight:700; padding:9px 22px; font-size:15px; border-radius:10px; border:0; cursor:pointer; }
+  #playAll.stop { background:#ff6b6b; }
+  #readout { font-family:ui-monospace,monospace; font-size:14px; color:#ff9f43; margin:12px 0 4px; min-height:20px; }
+  #kb { position:relative; height:190px; margin-top:8px; overflow-x:auto; border:1px solid #2a2e37; border-radius:12px; background:#0b0c0f; user-select:none; }
+  #kb .whites { display:flex; height:100%; min-width:640px; }
+  #kb .wk { flex:1; background:linear-gradient(#f4f1ea,#d9d4c7); border-right:1px solid #9a958a; border-radius:0 0 5px 5px; position:relative; }
+  #kb .wk span { position:absolute; bottom:8px; width:100%; text-align:center; font-size:10px; color:#8a857a; }
+  #kb .blacks { position:absolute; top:0; left:0; right:0; height:62%; pointer-events:none; }
+  #kb .bk { position:absolute; top:0; height:100%; width:3.1%; transform:translateX(-50%); background:linear-gradient(#3a3d44,#141518); border-radius:0 0 5px 5px; z-index:2; }
+  #kb .bk span { position:absolute; bottom:8px; width:100%; text-align:center; font-size:9px; color:#6a6e78; }
+  #kb .wk.on { background:linear-gradient(#7db8f0,#4a86c8); }
+  #kb .wk.on span { color:#10233a; font-weight:700; }
+  #kb .bk.on { background:linear-gradient(#7db8f0,#3a6fa8); }
+  #kb .bk.on span { color:#10233a; font-weight:700; }
+  #kb .wk.root { background:linear-gradient(#ffb35e,#e08a1e); }
+  #kb .wk.root span { color:#3a2200; font-weight:700; }
+  #kb .bk.root { background:linear-gradient(#ffb35e,#c87a12); }
+  #kb .bk.root span { color:#3a2200; font-weight:700; }
+  .hint { margin-top:14px; font-size:13px; color:#7a8191; }
+  .hint b { color:#9aa0ad; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>prog<span class="k">2</span>keys</h1>
+  <p class="dim">Type a chord progression, see it as keys on a piano. Click any chord to hear it.</p>
+
+  <input id="prog" type="text" autocomplete="off" spellcheck="false"
+         placeholder="Cmaj7 Am7 Dm7 G7">
+  <div class="presets">
+    try:
+    <a data-preset="Dm7 G7 Cmaj7">ii–V–I</a>
+    <a data-preset="C7 C7 C7 C7 F7 F7 C7 C7 G7 F7 C7 G7">12-bar blues</a>
+    <a data-preset="Am G F E">andalusian</a>
+    <a data-preset="Cmaj9 Am9 Dm9 G13">lofi</a>
+  </div>
+
+  <div id="chips"></div>
+
+  <div class="controls">
+    <div class="grp">
+      <button id="tDown">−</button><span class="lbl" id="transposeLabel">0</span><button id="tUp">+</button>
+      <span>transpose</span>
+    </div>
+    <div class="grp">
+      <button id="acc">#</button><span>sharps/flats</span>
+    </div>
+    <div class="grp">
+      <button id="invDown">−</button><span class="lbl" id="invLabel">root</span><button id="invUp">+</button>
+      <span>inversion</span>
+    </div>
+    <div class="grp">
+      <input id="bpm" type="number" value="90" min="40" max="220"><span>bpm</span>
+      <select id="beats">
+        <option value="1">1 beat/chord</option>
+        <option value="2">2 beats/chord</option>
+        <option value="4" selected>4 beats/chord</option>
+      </select>
+    </div>
+    <button id="playAll">▶ play all</button>
+  </div>
+
+  <div id="readout"></div>
+  <div id="kb"></div>
+
+  <p class="hint"><b>click</b> a chord = hear it &nbsp;·&nbsp; <b>shift+click</b> = next inversion &nbsp;·&nbsp; orange key = root, blue = chord tones. Qualities understood: maj m 7 maj7 m7 dim dim7 ø aug sus add9 9 11 13 6/9 7#9 7b9… plus slash chords.</p>
+</div>
+<script src="prog2keys.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
