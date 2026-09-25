@@ -36,3 +36,17 @@ sources are kept as-is; anything else gets ffmpeg'd to MP3.
   Only tracks with downloads enabled give you the artist's original file.
 - Binds to `127.0.0.1` only. If you want it on your LAN, change the
   `ThreadingHTTPServer` bind address and know what you're doing.
+- Only answers pages it trusts: its own (`127.0.0.1:8765` / `localhost:8765`)
+  and the deployed copy on `danfr4nk.github.io`. Any other site you have open
+  gets a 403 instead of making your machine run yt-dlp, and the Host header
+  must be the loopback address (no DNS-rebinding tricks). Deploying the page
+  somewhere else? Add its origin to `ALLOWED_ORIGINS` in `server.py`.
+- Only `http(s)://…soundcloud.com/…` URLs are accepted, and they're handed to
+  yt-dlp after `--`, so nothing in a URL can be read as a yt-dlp option.
+
+## Tests
+
+`python3 test_server.py` — spins the real server up on a spare port against a
+fake `yt-dlp` (no network, no ffmpeg): origin/host gating, URL validation,
+option injection, and a full job whose title needs UTF-8 in the download
+filename.
