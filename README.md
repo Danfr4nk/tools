@@ -50,6 +50,17 @@ Each tool lives in its own directory with its own README:
 2. Keep it static if it can be static. If it needs a backend, say so in the README.
 3. Link it from the splash page (`index.html`).
 
+## Tests
+
+`./run-tests.sh` runs every suite in the repo (JS `*.test.js` / `test-*.mjs`
+files are picked up automatically; Python suites are listed in the script) and
+exits non-zero if any fail. `./run-tests.sh melody` runs just the matching
+ones. Needs only `node` + `python3`. CI runs the same script on every push and
+PR (`.github/workflows/tests.yml`).
+
+When adding a tool with tests, name them `*.test.js` or `test-*.mjs` so the
+runner finds them, or add a line to `run-tests.sh` for anything else.
+
 ## Deploy
 
 GitHub Pages serves this repo from `main` at

@@ -52,6 +52,13 @@ const Prog2Keys = (() => {
     'maj7#11': [0,4,7,11,18], 'M7#11': [0,4,7,11,18],
   };
 
+  // "M" means major. These have no exact key above, and case-folding them
+  // would silently turn CM6 / CM13 / CMadd9 into minor chords.
+  const MAJOR_ALIAS = {
+    'M6': '6', 'M69': '69', 'M6/9': '6/9', 'Madd9': 'add9', 'Madd11': 'add11',
+    'M11': 'maj11', 'M13': 'maj13', 'maj6': '6', 'maj69': '69', 'maj6/9': '6/9',
+  };
+
   const mod12 = n => ((n % 12) + 12) % 12;
 
   function pcOf(letter, acc) {
@@ -66,8 +73,13 @@ const Prog2Keys = (() => {
     q = q.replace(/Δ/g, 'maj').replace(/ø7/g, 'm7b5').replace(/ø/g, 'm7b5')
          .replace(/°7/g, 'dim7').replace(/°/g, 'dim');
     if (q in QUALITIES) return q;
-    const lo = q.toLowerCase();
+    if (q in MAJOR_ALIAS) return MAJOR_ALIAS[q];
+    // a capital M that isn't "Maj"/"Min"/"Mi" must never take the
+    // lowercase path below (M -> m flips the third)
+    if (/^M(?![Aa][Jj]|[Ii])/.test(q)) return null;
+    const lo = q.toLowerCase().replace(/^mi(?!n)/, 'm'); // Real Book "mi7"
     if (lo in QUALITIES) return lo;
+    if (lo in MAJOR_ALIAS) return MAJOR_ALIAS[lo];
     return null;
   }
 
@@ -97,14 +109,22 @@ const Prog2Keys = (() => {
     return splitProgression(text).map(parseChordSymbol);
   }
 
-  // concrete MIDI voicing: root parked at C4 (60), inversion rotates the stack,
-  // slash bass drops underneath, everything clamped into 48..83 (C3..B5)
+  // concrete MIDI voicing: root parked at C4 (60), inversion puts chord tone
+  // #inv in the bass with every other tone raised above it, slash bass drops
+  // underneath, everything clamped into 48..83 (C3..B5). Returned ascending.
+  // (Rotating the stack and adding 12 only works inside one octave: for a
+  // 9th/11th/13th the extensions already sit above the octave, so the
+  // "inverted" bass ended up above the root and the order came out scrambled.)
   function voicing(chord, inversion = 0) {
     const n = chord.intervals.length;
     const inv = ((inversion % n) + n) % n;
     const base = 60 + chord.root;
     const stacked = chord.intervals.map(i => base + i);
-    let midis = stacked.slice(inv).concat(stacked.slice(0, inv).map(m => m + 12));
+    const low = stacked[inv];
+    let midis = [low, ...stacked.filter((_, i) => i !== inv).map(m => {
+      while (m <= low) m += 12;
+      return m;
+    })].sort((a, b) => a - b);
     if (chord.bass != null) {
       const lowPc = mod12(midis[0]);
       const delta = mod12(lowPc - chord.bass);

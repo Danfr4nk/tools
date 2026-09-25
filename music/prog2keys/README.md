@@ -7,7 +7,7 @@ it (WebAudio, no samples needed).
 - `prog2keys.js` — chord-symbol parser + voicing math. Pure JS, zero imports;
   also runs in Node (`node test-prog2keys.mjs`)
 - `app.js` — DOM, keyboard render, audio, transport
-- `test-prog2keys.mjs` — 29 parser/voicing/transpose checks
+- `test-prog2keys.mjs` — 43 parser/voicing/transpose checks
 
 Understood qualities: maj m 7 maj7 m7 mmaj7 dim dim7 ø/m7b5 aug 7#5 sus
 sus2 7sus4 add9 madd9 9 m9 maj9 11 m11 13 m13 7b5 7#9 7b9 7#11 6 6/9 5…

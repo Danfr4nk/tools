@@ -1,6 +1,6 @@
 // app.js — glue: file decode -> extractMelody -> piano roll -> play/export.
-import { extractMelody } from './melody.js';
-import { createRoll, midiName } from './roll.js';
+import { extractMelody } from './melody.js?v=20260925a';
+import { createRoll, midiName } from './roll.js?v=20260925a';
 import { notesToMidi } from './midi.js';
 
 const $ = id => document.getElementById(id);

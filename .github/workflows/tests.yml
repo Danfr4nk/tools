@@ -1,0 +1,18 @@
+# Runs every suite in the repo (see run-tests.sh). Pages deploys straight from
+# main regardless — this only makes a red test visible on the commit/PR.
+name: tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: ./run-tests.sh

@@ -1,5 +1,5 @@
-// test-melody3.mjs — regression suite for melody.js v2 (hysteresis +
-// harmonicity gate + octave-by-evidence). Run: node test-melody3.mjs
+// test-melody3.mjs — regression suite for melody.js (hysteresis +
+// harmonicity gate + note-level octave-by-evidence). Run: node test-melody3.mjs
 // All audio is synthesized in-memory; no files written.
 import { extractMelody } from './melody.js';
 
@@ -70,6 +70,18 @@ function drums(buf, t0, bars, beat = 0.5) {
     const bt = t0 + b * beat;
     addKick(buf, bt); addHat(buf, bt + beat / 2);
     if (b % 2 === 1) addSnare(buf, bt);
+  }
+}
+// bass with a full sawtooth-ish harmonic series (5 partials) — every one of
+// its harmonics lands on the lead's when it doubles the lead an octave down
+function addRichBass(buf, midi, t0, dur, amp) {
+  const f = mf(midi), start = Math.floor(t0 * SR), n = Math.floor(dur * SR);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR, env = Math.min(1, t / 0.01) * Math.exp(-t * 1.5);
+    let s = 0;
+    for (let h = 1; h <= 5; h++) s += Math.sin(2 * Math.PI * f * h * t) / h;
+    const idx = start + i;
+    if (idx < buf.length) buf[idx] += amp * env * s;
   }
 }
 function addPad(buf, midis, t0, dur, amp = 0.15) {
@@ -202,6 +214,42 @@ T.push(['T6b regression: lead octave wins over bass', async () => {
   const midis = notes.map(n => n.midi);
   check('T6b', notes.length === 8 && midis.every((m, i) => m === seq[i]),
     `got [${midis.join(' ')}]`);
+}]);
+
+// T7: bass doubling the lead an octave down, as loud as the lead, with
+// vibrato + drums. v2 read 4/12 here (bass stole the melody an octave low).
+T.push(['T7 octave-doubling bass: >=10/12', async () => {
+  const seq = [64, 67, 69, 72, 71, 67, 65, 64, 62, 60, 62, 64];
+  const buf = mk(seq.length * 0.5 + 0.6);
+  seq.forEach((m, i) => {
+    addLead(buf, m, 0.2 + i * 0.5, 0.42, { amp: 0.5, vibHz: 5.5, vibCents: 30 });
+    addRichBass(buf, m - 12, 0.2 + i * 0.5, 0.45, 0.5);
+  });
+  drums(buf, 0.2, seq.length * 2, 0.25);
+  const { notes } = await extractMelody(buf, SR);
+  let hits = 0;
+  const det = seq.map((m, i) => {
+    const w = inWin(notes, 0.2 + i * 0.5, 0.62 + i * 0.5);
+    if (w.length === 1 && w[0].midi === m) hits++;
+    return w.map(n => n.midi - m).join(',') || 'x';
+  });
+  check('T7', hits >= 10, `${hits}/12 offsets ${det.join(' ')}`);
+}]);
+
+// T8: note timing is unbiased — onsets land within 20ms of truth on median
+// (v2 stamped notes at the analysis frame's first sample: ~23ms early).
+T.push(['T8 onset timing: |median error| < 20ms', async () => {
+  const buf = mk(5.0), seq = [60, 62, 64, 67, 69, 67, 64, 62];
+  seq.forEach((m, i) => {
+    addLead(buf, m, 0.2 + i * 0.55, 0.45);
+    addBass(buf, m - 24, 0.2 + i * 0.55, 0.45);
+  });
+  drums(buf, 0.2, 16, 0.28);
+  const { notes } = await extractMelody(buf, SR);
+  const errs = notes.map((n, i) => n.start - (0.2 + i * 0.55)).sort((a, b) => a - b);
+  const med = errs[errs.length >> 1];
+  check('T8', notes.length === seq.length && Math.abs(med) < 0.02,
+    `median ${(med * 1000).toFixed(1)}ms over ${notes.length} notes`);
 }]);
 
 for (const [name, fn] of T) {

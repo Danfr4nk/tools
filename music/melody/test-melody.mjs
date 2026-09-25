@@ -1,10 +1,12 @@
 // test-melody.mjs — synthetic "full mix" with a known lead melody.
 // Run: node test-melody.mjs
 import { extractMelody } from './melody.js';
-import { writeFileSync } from 'fs';
 
 const SR = 22050;
 const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+// seeded LCG so the hat noise (and the result) is reproducible run to run
+let seed = 24681357;
+const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x3fffffff - 1;
 
 function tone(midi, start, dur, amp, harmonics) {
   const n = Math.floor(dur * SR);
@@ -32,7 +34,7 @@ function mixInto(dst, src, startSec) {
 function noiseBurst(dur, amp) {
   const n = Math.floor(dur * SR);
   const buf = new Float32Array(n);
-  for (let i = 0; i < n; i++) buf[i] = amp * (Math.random() * 2 - 1) * Math.exp(-i / (n * 0.2));
+  for (let i = 0; i < n; i++) buf[i] = amp * rnd() * Math.exp(-i / (n * 0.2));
   return buf;
 }
 

@@ -4,17 +4,23 @@
 // Method (simplified MELODIA-style salience tracking):
 //   1. downsample to 22050 Hz, frame into 2048-sample Hann windows, hop 1024
 //   2. per frame: FFT magnitude spectrum
-//   3. pitch salience(m) = sum over harmonics h of w_h * |X(bin(f0(m)*h))|
-//      over MIDI 36..96, with a mild lead-band emphasis (melodies live midrange)
-//   4. argmax + explaining-away penalty (bass stealing the melody) +
-//      octave disambiguation by harmonic spectral evidence, then parabolic
-//      interpolation of the salience peak for sub-semitone f0 (vibrato stays
-//      continuous instead of becoming a square wave on the MIDI grid)
+//   3. pitch salience(m) = sum over harmonics h of w_h * peak |X| within
+//      +-1 semitone of f0(m)*h (cos^2-weighted), over MIDI 36..96, with a
+//      mild lead-band emphasis (melodies live midrange). The tolerance keeps
+//      salience intact when the pitch is off the semitone grid (vibrato,
+//      slides) instead of reading one rounded bin that the energy missed
+//   4. argmax + explaining-away penalty (bass stealing the melody), pitch
+//      from salience averaged over +-2 frames near the raw winner, then
+//      parabolic interpolation for sub-semitone f0 (vibrato stays continuous
+//      instead of becoming a square wave on the MIDI grid)
 //   5. voicing via adaptive salience/RMS thresholds + harmonicity gate
 //      (the winning pitch must explain a share of the frame's spectrum —
 //      broadband percussion/noise fails this and goes unvoiced)
 //   6. median smoothing + hysteresis note segmentation (0.6-semitone deadband,
 //      2-frame confirmation: vibrato rides through, real steps cut cleanly)
+//   7. per-note octave decision: fold an octave-up error down only when the
+//      lower octave's own harmonics started with the note (common onset =
+//      one source), not when a pad/bass was already sustaining down there
 //
 // export: extractMelody(monoFloat32, sampleRate, onProgress) -> Promise<{notes, duration, stats}>
 
@@ -64,10 +70,18 @@ function hannWindow(n) {
 }
 const HANN = hannWindow(N);
 
-// candidate table: for each MIDI, list of [bin, weight]
+// candidate table: for each MIDI and harmonic, a search window of FFT bins.
+// Each harmonic contributes its strongest bin within +-1 semitone of the
+// ideal frequency, weighted cos^2 by distance (MELODIA-style harmonic
+// summation). Reading a single rounded bin instead makes salience collapse
+// whenever the pitch sits off the semitone grid — vibrato, slides, detuned
+// sources — and at higher harmonics a 50-cent offset is several bins away.
+// Low harmonics get at least a +-1-bin window so interpolation still works
+// where a semitone is narrower than a bin.
 function buildCandidates(sr) {
   const cands = [];
   const binHz = sr / N;
+  const SEMI = Math.pow(2, 1 / 12) - 1;
   for (let m = MIN_MIDI; m <= MAX_MIDI; m++) {
     const f0 = 440 * Math.pow(2, (m - 69) / 12);
     // lead-band emphasis: melodies live ~150Hz-2.5kHz; de-weight bass rumble & fizz
@@ -79,7 +93,15 @@ function buildCandidates(sr) {
     for (let h = 1; h <= N_HARM; h++) {
       const f = f0 * h;
       if (f > MAX_F) break;
-      harm.push([Math.round(f / binHz), Math.pow(h, -0.55) * band]);
+      const center = f / binHz;
+      const tol = Math.max(1, f * SEMI / binHz); // in bins
+      const lo = Math.max(1, Math.ceil(center - tol)), hi = Math.min(N / 2, Math.floor(center + tol));
+      const bins = [], gains = [];
+      for (let k = lo; k <= hi; k++) {
+        const c = Math.cos(0.5 * Math.PI * Math.abs(k - center) / tol);
+        bins.push(k); gains.push(c * c);
+      }
+      harm.push({ w: Math.pow(h, -0.55) * band, bins, gains });
     }
     cands.push({ midi: m, f0, harm });
   }
@@ -178,6 +200,10 @@ export async function extractMelody(mono, sampleRate, onProgress) {
   // quantized per-frame *decisions* cannot.
   const penAll = new Float64Array(nFrames * nC);
   const harmAll = new Float32Array(nFrames * nC);
+  // salience from odd harmonics only (h = 1, 3, 5, 7): the part of a
+  // candidate's evidence its octave-up does NOT share. Used by the
+  // note-level octave decision below.
+  const oddAll = new Float32Array(nFrames * nC);
   const CHUNK = 256;
   for (let f0idx = 0; f0idx < nFrames; f0idx++) {
     const off = f0idx * HOP;
@@ -192,12 +218,32 @@ export async function extractMelody(mono, sampleRate, onProgress) {
     for (let k = 0; k <= N / 2; k++) {
       mag[k] = Math.sqrt(re[k] * re[k] + im[k] * im[k]) / N * EQW[k];
     }
-    // salience for every candidate
+    let totalE = 0;
+    for (let k = 0; k <= N / 2; k++) totalE += mag[k] * mag[k];
+    const hb = f0idx * nC, invE = 1 / (totalE || 1);
+    // salience for every candidate, plus its harmonic energy fraction (for
+    // the octave tiebreak and the voicing gate in pass 2): energy in the
+    // Hann main lobe (peak bin +-1) of each located harmonic peak
     for (let c = 0; c < nC; c++) {
-      const h = cands[c].harm;
-      let s = 0;
-      for (let j = 0; j < h.length; j++) s += h[j][1] * mag[h[j][0]];
+      const hs = cands[c].harm;
+      let s = 0, so = 0, he = 0;
+      for (let j = 0; j < hs.length; j++) {
+        const { w, bins, gains } = hs[j];
+        let best = 0, bk = bins[0];
+        for (let q = 0; q < bins.length; q++) {
+          const v = gains[q] * mag[bins[q]];
+          if (v > best) { best = v; bk = bins[q]; }
+        }
+        s += w * best;
+        if (!(j & 1)) so += w * best;
+        if (j < 6) {
+          const a = mag[bk - 1], b = mag[bk], d = bk < N / 2 ? mag[bk + 1] : 0;
+          he += a * a + b * b + d * d;
+        }
+      }
       salAll[c] = s;
+      oddAll[hb + c] = so;
+      harmAll[hb + c] = he * invE;
     }
     // Pass A — "explaining away": a lower candidate whose harmonics coincide
     // with a strong higher candidate is probably stealing its energy
@@ -214,18 +260,6 @@ export async function extractMelody(mono, sampleRate, onProgress) {
       pen[c] = salAll[c] - 0.85 * mx;
     }
     penAll.set(pen, f0idx * nC);
-    // harmonic energy fraction per candidate (for the octave tiebreak and
-    // the voicing gate in pass 2)
-    let totalE = 0;
-    for (let k = 0; k <= N / 2; k++) totalE += mag[k] * mag[k];
-    const hb = f0idx * nC, invE = 1 / (totalE || 1);
-    for (let c = 0; c < nC; c++) {
-      const hh = cands[c].harm;
-      let he = 0;
-      const nh = Math.min(hh.length, 6);
-      for (let j = 0; j < nh; j++) he += mag[hh[j][0]] * mag[hh[j][0]];
-      harmAll[hb + c] = he * invE;
-    }
     if (onProgress && (f0idx % CHUNK === 0)) {
       onProgress(f0idx / nFrames * 0.72);
       await new Promise(r => setTimeout(r, 0));
@@ -246,6 +280,7 @@ export async function extractMelody(mono, sampleRate, onProgress) {
   // arbitrary interpolated pitches.
   const SM_RAD = 2;
   const penS = new Float64Array(nC);
+  const foldVote = new Uint8Array(nFrames);
   for (let f = 0; f < nFrames; f++) {
     const ro = f * nC;
     // raw winner: "is there a lead here?" (for voicing)
@@ -260,8 +295,14 @@ export async function extractMelody(mono, sampleRate, onProgress) {
       for (let w = w0; w <= w1; w++) s += penAll[w * nC + c];
       penS[c] = s * inv;
     }
-    let bi = 0;
-    for (let c = 1; c < nC; c++) if (penS[c] > penS[bi]) bi = c;
+    // The averaged peak is searched only within a semitone of the raw
+    // winner: that's all vibrato needs (the raw winner dithers +-1 around
+    // the vibrato center), and it stops the +-2-frame average from handing
+    // a note boundary to whatever sustained source (pad, drone) was
+    // continuous across the window — the lead's new note owns the frame as
+    // soon as it wins raw.
+    let bi = rbi;
+    for (let c = Math.max(0, rbi - 1); c <= Math.min(nC - 1, rbi + 1); c++) if (penS[c] > penS[bi]) bi = c;
     // neighbor-max harmonicity (stable under vibrato dither)
     const hb = f * nC;
     const harmN = (c) => {
@@ -271,15 +312,16 @@ export async function extractMelody(mono, sampleRate, onProgress) {
       const d = c < nC - 1 ? harmAll[hb + c + 1] : 0;
       return Math.max(a, b, d);
     };
-    // octave disambiguation: the lower octave's harmonic bins are a superset
-    // of the upper's, so it always explains >= as much spectrum. Take the
-    // lower only when it explains clearly MORE (a real fundamental plus odd
-    // harmonics is present) — this kills octave-up errors from a strong 2nd
-    // harmonic without dragging genuine high notes down to a subharmonic
-    // ghost.
-    if (bi >= 12 && penS[bi - 12] >= 0.6 * penS[bi] && harmN(bi - 12) > 1.3 * harmN(bi)) {
-      bi -= 12;
-    }
+    // octave evidence: the lower octave's harmonic bins are a superset of
+    // the upper's, so it always explains >= as much spectrum. It gets a vote
+    // only when it explains clearly MORE (a real fundamental plus odd
+    // harmonics is present) — the signature of an octave-up error from a
+    // strong 2nd harmonic. The fold itself is decided per NOTE after
+    // segmentation (see octave pass below): per frame it flickers, and a
+    // single frame can't tell the lead's own fundamental from a pad or bass
+    // already sustaining an octave down.
+    const fold = bi >= 12 && penS[bi - 12] >= 0.6 * penS[bi] && harmN(bi - 12) > 1.3 * harmN(bi);
+    foldVote[f] = fold ? 1 : 0;
     // parabolic interpolation of the salience peak -> sub-semitone f0
     let frac = 0;
     if (bi > 0 && bi < nC - 1) {
@@ -289,7 +331,7 @@ export async function extractMelody(mono, sampleRate, onProgress) {
     }
     f0[f] = cands[bi].f0 * Math.pow(2, frac / 12);
     sal[f] = rawBest > 0 ? rawBest : 0;
-    harm[f] = harmN(bi);
+    harm[f] = fold ? harmN(bi - 12) : harmN(bi);
     if (onProgress && (f % CHUNK === 0)) {
       onProgress(0.74 + f / nFrames * 0.11);
       await new Promise(r => setTimeout(r, 0));
@@ -345,6 +387,11 @@ export async function extractMelody(mono, sampleRate, onProgress) {
   // and octave jumps cut within ~90ms; slow glides get absorbed into the
   // nearer side instead of spawning intermediate fragment notes.
   const frameDur = HOP / sr;
+  // a frame stands for the hop-wide slice around its window CENTER, not its
+  // first sample: frame i covers [i*HOP, i*HOP + N], so a run of frames
+  // i0..i1 spans [i0*HOP + (N-HOP)/2, (i1+1)*HOP + (N-HOP)/2]. Stamping
+  // notes at i*HOP put every onset and offset ~23ms early.
+  const tOff = (N - HOP) / 2 / sr;
   const cmidi = new Float32Array(nFrames);
   for (let i = 0; i < nFrames; i++) {
     cmidi[i] = (voiced[i] && !Number.isNaN(sm[i]))
@@ -354,15 +401,45 @@ export async function extractMelody(mono, sampleRate, onProgress) {
   const MIN_NOTE = 0.09, MERGE_GAP = 0.08;
   const raw = [];
   let cur = null, pend = 0;
+  // Octave pass (per note). Fold a note down an octave when most of its
+  // frames voted for the lower octave AND that lower octave's own evidence
+  // (its odd harmonics) arrived with the note: harmonics that start together
+  // belong to one source. If the odd-harmonic energy was already there
+  // before the note began, it's a separate sustained source — a pad or bass
+  // holding the octave below — and the lead stays where it is.
+  // "Before" only counts frames where nothing was tracked, or where the
+  // tracked pitch was that lower octave itself. Frames tracking some other
+  // note (the previous melody note, legato) are skipped: its partials land
+  // in the lower octave's +-1-semitone harmonic windows by coincidence
+  // (a fifth above supplies the 3rd harmonic, etc.), which says nothing
+  // about a separate source at the octave below.
+  const OCT_PRE = 4, OCT_SKIP = 2; // pre-window: 4 frames, ending 2 before onset (window overlap)
+  function octaveFold(midi, s, e) {
+    const c = midi - MIN_MIDI, lc = c - 12;
+    if (lc < 0 || c >= nC) return false;
+    let votes = 0;
+    for (let k = s; k < e; k++) votes += foldVote[k];
+    if (votes * 2 < e - s) return false;
+    let during = 0;
+    for (let k = s; k < e; k++) during += oddAll[k * nC + lc];
+    during /= e - s;
+    let pre = 0, np = 0;
+    for (let k = Math.max(0, s - OCT_SKIP - OCT_PRE); k < s - OCT_SKIP; k++) {
+      if (!Number.isNaN(cmidi[k]) && Math.abs(cmidi[k] - (midi - 12)) > 0.5) continue;
+      pre += oddAll[k * nC + lc]; np++;
+    }
+    return !np || pre / np < 0.5 * during;
+  }
   function closeNote(endFrame) {
     const n = endFrame - cur.start;
     const dur = n * frameDur;
     if (dur >= MIN_NOTE && n > 0) {
-      const midi = Math.round(cur.sum / cur.n);
+      let midi = Math.round(cur.sum / cur.n);
+      if (octaveFold(midi, cur.start, endFrame)) midi -= 12;
       let ssum = 0;
       for (let k = cur.start; k < endFrame; k++) ssum += sal[k];
       raw.push({
-        midi, start: cur.start * frameDur, dur,
+        midi, start: cur.start * frameDur + tOff, dur,
         conf: ssum / n / (p95sal || 1),
       });
     }
@@ -387,6 +464,20 @@ export async function extractMelody(mono, sampleRate, onProgress) {
     }
   }
   if (cur) closeNote(nFrames);
+  // octave-flicker fragments: a sliver (< ~0.19s) that sits exactly an
+  // octave from a longer note it touches is that note's onset/offset
+  // transient read at the wrong octave — adopt the neighbor's pitch so the
+  // merge below joins them instead of emitting a phantom octave blip.
+  const FRAG = 4 * frameDur + 1e-9;
+  for (let i = 0; i < raw.length; i++) {
+    const nt = raw[i];
+    if (nt.dur > FRAG) continue;
+    for (const nb of [raw[i - 1], raw[i + 1]]) {
+      if (!nb || nb.dur <= nt.dur || Math.abs(nb.midi - nt.midi) !== 12) continue;
+      const gap = nb.start > nt.start ? nb.start - (nt.start + nt.dur) : nt.start - (nb.start + nb.dur);
+      if (gap < MERGE_GAP) { nt.midi = nb.midi; break; }
+    }
+  }
   // merge same-pitch notes separated by tiny gaps
   const notes = [];
   for (const nt of raw) {
