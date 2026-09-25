@@ -13,7 +13,7 @@ export function createRoll(canvas, opts = {}) {
   const ctx = canvas.getContext('2d');
   const S = {
     notes: [], duration: 0,
-    pxPerSec: 120, scrollX: 0, scrollY: 0,
+    pxPerSec: 120, scrollX: 0, scrollY: 0, fit: true,
     lo: 48, hi: 72, keyH: 18, keyW: 64,
     playhead: null, selected: -1,
     dpr: 1, W: 0, H: 0,
@@ -24,6 +24,10 @@ export function createRoll(canvas, opts = {}) {
     S.dpr = Math.min(2, window.devicePixelRatio || 1);
     S.W = Math.max(50, r.width); S.H = Math.max(50, r.height);
     canvas.width = S.W * S.dpr; canvas.height = S.H * S.dpr;
+    // setData() usually runs while the results section is still hidden
+    // (width 0), so a fit computed then is garbage — re-fit once the real
+    // width arrives, unless the user has zoomed since
+    if (S.fit) fitScale();
     draw();
   }
   new ResizeObserver(resize).observe(canvas);
@@ -44,14 +48,19 @@ export function createRoll(canvas, opts = {}) {
     zoomFit();
   }
 
-  function zoomFit() {
+  function fitScale() {
     const avail = Math.max(100, S.W - S.keyW - 20);
     S.pxPerSec = avail / Math.max(0.5, S.duration);
+  }
+  function zoomFit() {
+    S.fit = true;
+    fitScale();
     S.scrollX = 0; S.scrollY = 0;
     draw();
   }
   function zoomBy(f, cx) {
     const t = cx == null ? tOf(S.keyW + (S.W - S.keyW) / 2) : tOf(cx);
+    S.fit = false;
     S.pxPerSec = Math.min(4000, Math.max(8, S.pxPerSec * f));
     S.scrollX = S.keyW + t * S.pxPerSec - (cx == null ? (S.W - S.keyW) / 2 + S.keyW : cx);
     draw();

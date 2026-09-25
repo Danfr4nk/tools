@@ -1,5 +1,7 @@
 // gen-test-wav.mjs — writes a 12s "song" WAV: vibrato lead + bass + kick/hats.
+// Run: node gen-test-wav.mjs [out.wav]   (default: test-song.wav next to this script)
 import { writeFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 const SR = 44100;
 const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
 function vibTone(midi, dur, amp) {
@@ -50,7 +52,8 @@ hdr.write('RIFF', 0); hdr.writeUInt32LE(36 + data.length * 2, 4); hdr.write('WAV
 hdr.write('fmt ', 12); hdr.writeUInt32LE(16, 16); hdr.writeUInt16LE(1, 20); hdr.writeUInt16LE(1, 22);
 hdr.writeUInt32LE(SR, 24); hdr.writeUInt32LE(SR * 2, 28); hdr.writeUInt16LE(2, 32); hdr.writeUInt16LE(16, 34);
 hdr.write('data', 36); hdr.writeUInt32LE(data.length * 2, 40);
-writeFileSync('/home/hatch/workspace/tools-migration/tools-clone/music/melody/test-song.wav', Buffer.concat([hdr, Buffer.from(data.buffer)]));
-console.log('wrote test-song.wav', total.toFixed(1) + 's');
+const out = process.argv[2] || fileURLToPath(new URL('./test-song.wav', import.meta.url));
+writeFileSync(out, Buffer.concat([hdr, Buffer.from(data.buffer)]));
+console.log('wrote ' + out, total.toFixed(1) + 's');
 // expected melody for the browser test to verify
 console.log('expected:', MEL.join(' '));

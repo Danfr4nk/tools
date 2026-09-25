@@ -4,6 +4,9 @@ import { extractMelody } from './melody.js';
 
 const SR = 22050;
 const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+// seeded LCG so the snare noise (and the result) is reproducible run to run
+let seed = 123456789;
+const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x3fffffff - 1;
 
 function vibTone(midi, start, dur, amp) {
   const n = Math.floor(dur * SR);
@@ -37,7 +40,7 @@ function snare(dur = 0.18, amp = 0.5) {
   const buf = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const t = i / SR;
-    buf[i] = amp * (Math.random() * 2 - 1) * Math.exp(-t * 25)
+    buf[i] = amp * rnd() * Math.exp(-t * 25)
            + 0.3 * amp * Math.sin(2 * Math.PI * 190 * t) * Math.exp(-t * 30);
   }
   return buf;
