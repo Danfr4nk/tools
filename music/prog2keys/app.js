@@ -9,6 +9,7 @@ let sel = 0;
 let inv = {};           // idx -> inversion
 let semis = 0;          // transposition
 let flats = false;
+let flatsAuto = true;   // follow the typed spelling until the user picks
 let bpm = 90, beatsPer = 4;
 let playing = false, stopFlag = false;
 
@@ -122,6 +123,14 @@ function renderAll() { renderChips(); renderKeyboard(); }
 function setProgression(text) {
   base = P.parseProgression(text);
   sel = 0; inv = {};
+  if (flatsAuto) {
+    // spell roots the way they were typed: "Bb Eb F" shouldn't come back
+    // as "A# D# F". Counts root/bass accidentals only (not the b in "7b9").
+    const nFlat = (text.match(/[A-G][b♭]/g) || []).length;
+    const nSharp = (text.match(/[A-G][#♯]/g) || []).length;
+    if (nFlat !== nSharp) flats = nFlat > nSharp;
+    document.getElementById('acc').textContent = flats ? '♭' : '#';
+  }
   renderAll();
 }
 
@@ -154,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('tDown').onclick = () => { semis--; renderAll(); };
   document.getElementById('tUp').onclick = () => { semis++; renderAll(); };
   document.getElementById('acc').onclick = e => {
+    flatsAuto = false;
     flats = !flats; e.target.textContent = flats ? '♭' : '#'; renderAll();
   };
   document.getElementById('invDown').onclick = () => {
