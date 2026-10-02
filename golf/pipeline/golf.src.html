@@ -1,0 +1,962 @@
+<title>Driver Swing 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Barlow:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one full-height instrument. Studio stage on top, transport + position strip docked below. */
+:root{
+  --ground:#0c0f0e;      /* page */
+  --panel:#141918;       /* dock surfaces */
+  --rule:#232b29;        /* hairlines */
+  --ink:#e6ebe7;         /* primary text */
+  --dim:#8d9993;         /* secondary text */
+  --flag:#e9a23b;        /* accent: playhead, active state */
+  --sage:#93b58a;        /* secondary accent: downswing / club path */
+  --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--ground);color:var(--ink);font-family:var(--body);font-size:14px}
+*{box-sizing:border-box}
+.app{min-height:100%;display:flex;flex-direction:column;gap:10px;padding-inline:16px;padding-block:12px 14px;max-width:1500px;margin:0 auto}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{margin:0;font-family:var(--display);font-weight:600;font-size:clamp(22px,2.6vw,30px);letter-spacing:.02em;text-wrap:balance}
+.sub{color:var(--dim);font-size:13px;margin:2px 0 0}
+.readout{font-family:var(--mono);font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums;display:flex;gap:14px;flex-wrap:wrap}
+.readout b{color:var(--ink);font-weight:500}
+.stage{position:relative;flex:1 1 auto;min-height:min(62vh,640px);border:1px solid var(--rule);border-radius:10px;overflow:hidden;background:#0a0d0c}
+.stage canvas{display:block;width:100%;height:100%;position:absolute;inset:0;touch-action:none}
+.plate{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+.pip{position:absolute;right:12px;bottom:12px;width:clamp(150px,24%,300px);aspect-ratio:16/9;max-width:calc(100% - 24px);border:1px solid var(--rule);border-radius:6px;background:#000;object-fit:cover;z-index:3}
+.hud{position:absolute;left:12px;top:12px;z-index:3;font-family:var(--mono);font-size:12px;line-height:1.55;color:var(--ink);background:rgba(10,13,12,.62);border:1px solid var(--rule);border-radius:6px;padding:8px 10px;pointer-events:none;font-variant-numeric:tabular-nums;min-width:178px}
+.hud .ph{font-family:var(--display);font-size:17px;font-weight:600;letter-spacing:.03em;color:var(--flag)}
+.hud .k{color:var(--dim)}
+[hidden]{display:none!important}
+.loading,.err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:13px;color:var(--dim);letter-spacing:.06em;z-index:4}
+.err{inset:auto 12px 12px 12px;background:#2a1414;color:#ffd6d0;border:1px solid #6b2a24;border-radius:8px;padding:10px 14px;letter-spacing:0}
+.dock{display:flex;flex-direction:column;gap:10px;background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:12px 14px}
+.transport{display:flex;align-items:center;gap:12px}
+.play{flex:none;width:44px;height:44px;border-radius:50%;border:1px solid var(--rule);background:var(--ground);color:var(--ink);cursor:pointer;display:grid;place-items:center}
+.play:hover,.play:focus-visible{border-color:var(--flag);color:var(--flag)}
+.play svg{width:16px;height:16px;fill:currentColor}
+.track{position:relative;flex:1;min-width:0;padding-bottom:16px}
+input[type=range]#scrub{width:100%;margin:0;accent-color:var(--flag);height:26px;cursor:pointer}
+.ticks{position:absolute;left:0;right:0;bottom:0;height:14px;pointer-events:none;margin-inline:8px}
+.ticks span{position:absolute;transform:translateX(-50%);font-family:var(--mono);font-size:10.5px;color:var(--dim);white-space:nowrap}
+.ticks span::before{content:"";position:absolute;left:50%;top:-7px;width:1px;height:5px;background:var(--dim)}
+.time{flex:none;font-family:var(--mono);font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums;text-align:right;min-width:92px}
+.time b{color:var(--ink);font-weight:500}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px}
+.group{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.lbl{font-family:var(--display);font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);margin-right:2px}
+.chip{border:1px solid var(--rule);background:var(--ground);color:var(--ink);border-radius:6px;padding:6px 10px;font:inherit;font-size:13px;cursor:pointer;display:inline-flex;gap:6px;align-items:baseline}
+.chip small{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.chip:hover,.chip:focus-visible{border-color:var(--flag)}
+.chip[aria-pressed=true]{border-color:var(--flag);color:var(--flag)}
+.chip[aria-pressed=true] small{color:var(--flag)}
+.chip:focus-visible,.play:focus-visible,input:focus-visible{outline:2px solid var(--flag);outline-offset:2px}
+.tog{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer;user-select:none}
+.tog input{accent-color:var(--flag);width:15px;height:15px;margin:0}
+.note{margin:0;color:var(--dim);font-size:12.5px;line-height:1.55;max-width:96ch}
+.note b{color:var(--ink);font-weight:500}
+@media (max-width:640px){
+  .hud{font-size:11px;min-width:0;padding:6px 8px}
+  .hud .ph{font-size:15px}
+  .ticks span.long{display:none}
+  .time{min-width:70px}
+}
+</style>
+
+<div class="app">
+  <header>
+    <div>
+      <h1>Driver Swing 3D</h1>
+      <p class="sub">One driver swing, 840 frames of phone-video pose track, retargeted onto a rigged athlete.</p>
+    </div>
+    <div class="readout" aria-live="off"><span>frame <b id="rFrame">0</b>/839</span><span>video <b id="rVideo">8.00</b> s</span></div>
+  </header>
+
+  <div class="stage" id="stage">
+    <video class="plate" id="plate" muted playsinline preload="auto" hidden></video>
+    <div class="hud" id="hud">
+      <div class="ph" id="hPhase">P1 Address</div>
+      <div><span class="k">swing clock</span> <span id="hClock">0.000 s</span></div>
+      <div><span class="k">hip turn&nbsp;&nbsp;&nbsp;</span> <span id="hHip">0°</span></div>
+      <div><span class="k">shoulder turn</span> <span id="hSh">0°</span></div>
+      <div><span class="k">x-factor&nbsp;&nbsp;&nbsp;</span> <span id="hX">0°</span></div>
+    </div>
+    <video class="pip" id="pip" muted playsinline preload="auto" hidden></video>
+    <div class="loading" id="loading">building the figure…</div>
+    <div class="err" id="err" hidden></div>
+  </div>
+
+  <div class="dock">
+    <div class="transport">
+      <button class="play" id="play" aria-label="Pause"><svg viewBox="0 0 16 16" id="playIcon"><rect x="3" y="2" width="3.5" height="12"/><rect x="9.5" y="2" width="3.5" height="12"/></svg></button>
+      <div class="track">
+        <input type="range" id="scrub" min="0" max="839" value="0" step="1" aria-label="Swing frame">
+        <div class="ticks" id="ticks"></div>
+      </div>
+      <div class="time"><b id="tClock">0.00</b> s<br><span id="tSpeedLbl">1× video</span></div>
+    </div>
+
+    <div class="row">
+      <div class="group" id="chips"><span class="lbl">Position</span></div>
+    </div>
+
+    <div class="row">
+      <div class="group" id="cams"><span class="lbl">Camera</span></div>
+      <div class="group" id="speeds"><span class="lbl">Speed</span></div>
+    </div>
+    <div class="row">
+      <div class="group">
+        <label class="tog"><input type="checkbox" id="loop" checked> Loop</label>
+        <label class="tog"><input type="checkbox" id="turn"> Turntable</label>
+        <label class="tog"><input type="checkbox" id="path" checked> Club path</label>
+        <label class="tog"><input type="checkbox" id="skel"> Raw track</label>
+        <label class="tog"><input type="checkbox" id="pipOn"> Source video</label>
+        <label class="tog"><input type="checkbox" id="overlay"> Overlay on video</label>
+      </div>
+    </div>
+    <p class="note"><b>What you are looking at:</b> an approximation, not a body scan and not optical mocap. The motion is MediaPipe Pose (complexity 1, 281 pose runs over the swing window, zero detection failures, mean landmark visibility 0.94–0.96) from one 30&nbsp;fps phone camera, interpolated and lightly smoothed. Depth is estimated by the network, not measured. The figure is a stock MakeHuman athletic base mesh with procedural clothes, not Dan's body. The club's angle in the image plane comes from the video. Its depth component comes from a swing-plane model, and the hand and face orientation follow from it. Hip sway comes from a camera solve against the video. The source camera sits behind the golfer, so it is a down-the-line view. Good enough to study the swing, not a frame-perfect measurement.</p>
+  </div>
+</div>
+
+<script id="trk" type="application/json">__TRACK__</script>
+<script id="glb" type="text/plain">__GLB__</script>
+<script id="vid" type="text/plain">__PLATE__</script>
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const V = THREE.Vector3, Q = THREE.Quaternion, M4 = THREE.Matrix4;
+const $ = id => document.getElementById(id);
+const TRK = JSON.parse($('trk').textContent);
+const N = TRK.n, FPS = TRK.fps, T0 = TRK.t0;
+const UP = new V(0, 1, 0), XT = new V(1, 0, 0);   // golfer frame: faces +z, target is +x
+const IMPACT = 624;
+
+/* ---------- positions on the swing (golf P-system) ---------- */
+const POS = [
+  ['P1', 'Address', 0], ['P2', 'Takeaway', 130], ['P3', 'Mid-backswing', 300], ['P4', 'Top', 450],
+  ['P5', 'Transition', 520], ['P7', 'Impact', 624], ['P8', 'Follow-through', 700], ['P10', 'Finish', 839]];
+
+/* ---------- small math helpers ---------- */
+function basisQ(a, b) {                      // frame with x = a, z = a×b, y = z×x
+  const x = a.clone().normalize();
+  const z = new V().crossVectors(x, b);
+  if (z.lengthSq() < 1e-12) z.set(0, 0, 1);
+  z.normalize();
+  const y = new V().crossVectors(z, x);
+  return new Q().setFromRotationMatrix(new M4().makeBasis(x, y, z));
+}
+const deltaQ = (a0, b0, a1, b1) => basisQ(a1, b1).multiply(basisQ(a0, b0).invert());
+const perp = (v, axis) => v.clone().sub(axis.clone().multiplyScalar(v.dot(axis)));
+const mid = (a, b) => a.clone().add(b).multiplyScalar(0.5);
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+function twistAbout(q, axis) {               // swing-twist decomposition: twist part of q about axis
+  const p = new V(q.x, q.y, q.z), d = p.dot(axis);
+  const t = new Q(axis.x * d, axis.y * d, axis.z * d, q.w);
+  return t.lengthSq() < 1e-12 ? new Q() : t.normalize();
+}
+function ik2(S, T, l1, l2, pole) {           // two-bone IK in the plane of S, T, pole
+  const v = T.clone().sub(S); let d = v.length(); const dn = v.divideScalar(d || 1);
+  d = clamp(d, Math.abs(l1 - l2) + 1e-3, (l1 + l2) * 0.9995);
+  const a = (l1 * l1 - l2 * l2 + d * d) / (2 * d), h = Math.sqrt(Math.max(0, l1 * l1 - a * a));
+  let pp = perp(pole, dn); if (pp.lengthSq() < 1e-10) pp = perp(new V(0, 0, 1), dn); pp.normalize();
+  return { E: S.clone().addScaledVector(dn, a).addScaledVector(pp, h), T: S.clone().addScaledVector(dn, d), pole: pp };
+}
+
+/* ---------- renderer / scene ---------- */
+const stage = $('stage');
+let renderer;
+try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: false }); }
+catch (e) { fail('WebGL is not available in this browser, so the 3D view cannot start.'); throw e; }
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.82;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+stage.insertBefore(renderer.domElement, $('hud'));
+
+const scene = new THREE.Scene();
+const BG = new THREE.Color(0x0b0e0d);
+scene.background = BG;
+scene.fog = new THREE.Fog(0x0b0e0d, 4.5, 11);
+const camera = new THREE.PerspectiveCamera(32, 16 / 10, 0.05, 60);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.minDistance = 0.6; controls.maxDistance = 12;
+controls.maxPolarAngle = Math.PI * 0.53;
+controls.target.set(0, 0.95, 0.1);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+pmrem.dispose();
+
+// studio lighting: warm key with soft shadows, cool fill, two rims
+scene.add(new THREE.HemisphereLight(0xcfd8e0, 0x16120e, 0.35));
+const key = new THREE.DirectionalLight(0xfff1e2, 3.1);
+key.position.set(2.2, 4.6, 3.4); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -2.2, right: 2.2, top: 2.6, bottom: -1.0, near: 1, far: 12 });
+key.shadow.bias = -0.0003; key.shadow.normalBias = 0.02;
+key.target.position.set(0, 0.9, 0.2);
+scene.add(key, key.target);
+const fill = new THREE.DirectionalLight(0xc9dcff, 0.55); fill.position.set(-3.5, 1.6, 2.2); scene.add(fill);
+const rimA = new THREE.DirectionalLight(0xe4eeff, 2.3); rimA.position.set(-2.4, 3.2, -3.6); scene.add(rimA);
+const rimB = new THREE.DirectionalLight(0xffe6c8, 1.4); rimB.position.set(3.0, 2.4, -3.0); scene.add(rimB);
+
+// floor, hitting mat, alignment stick
+const env = new THREE.Group(); scene.add(env);
+function canvasTex(w, h, draw, srgb = true) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+{
+  const floorTex = canvasTex(512, 512, (g, w, h) => {
+    const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    gr.addColorStop(0, '#222825'); gr.addColorStop(0.35, '#121513'); gr.addColorStop(1, '#0b0e0d');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  });
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(14, 64),
+    new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.92, metalness: 0 }));
+  floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; env.add(floor);
+
+  const turf = canvasTex(1024, 1024, (g, w, h) => {
+    g.fillStyle = '#20402a'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 90000; i++) {
+      const x = Math.random() * w, y = Math.random() * h, l = 22 + Math.random() * 26;
+      g.fillStyle = `hsl(${128 + Math.random() * 14},${32 + Math.random() * 18}%,${l}%)`;
+      g.fillRect(x, y, 1.4, 2.6 + Math.random() * 2);
+    }
+    g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 3; g.strokeRect(6, 6, w - 12, h - 12);
+  });
+  const mat = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.012, 1.5),
+    new THREE.MeshStandardMaterial({ map: turf, roughness: 0.97, metalness: 0 }));
+  mat.position.set(0.1, 0.006, 0.28); mat.receiveShadow = true; env.add(mat);
+
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.0055, 0.0055, 1.2, 12),
+    new THREE.MeshStandardMaterial({ color: 0xd99a2b, roughness: 0.45 }));
+  stick.rotation.z = Math.PI / 2; stick.position.set(0.1, 0.018, 0.42); stick.castShadow = true; env.add(stick);
+}
+
+/* ---------- source video (embedded) ---------- */
+function b64ToBytes(id) {
+  const s = $(id).textContent.trim(); const bin = atob(s); const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+let videoURL = null;
+function videoSrc() {
+  if (!videoURL) videoURL = URL.createObjectURL(new Blob([b64ToBytes('vid')], { type: 'video/mp4' }));
+  return videoURL;
+}
+
+/* ---------- skin + cloth shader ---------- */
+function patchBody(material) {
+  material.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec4 aCloth;\nattribute vec3 aEye;\nvarying vec3 vRest;\nvarying vec4 vCloth;\nvarying vec3 vEye;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vRest = position; vCloth = aCloth; vEye = aEye;
+        transformed += normalize(normal) * dot(aCloth, vec4(0.0060, 0.0105, 0.0090, 0.0030));`);
+    const pars = THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+      'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );',
+      `{ float ndl = dot( geometryNormal, directLight.direction );
+         vec3 wv = vec3(0.46, 0.19, 0.11) * gSkin;
+         vec3 wr = clamp((vec3(ndl) + wv) / (1.0 + wv), 0.0, 1.0);
+         reflectedLight.directDiffuse += wr * directLight.color * BRDF_Lambert( material.diffuseColor ); }`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vRest; varying vec4 vCloth; varying vec3 vEye;
+        float gSkin = 1.0;
+        float hash13(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+        float vnoise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+          return mix(mix(mix(hash13(i), hash13(i+vec3(1,0,0)), f.x), mix(hash13(i+vec3(0,1,0)), hash13(i+vec3(1,1,0)), f.x), f.y),
+                     mix(mix(hash13(i+vec3(0,0,1)), hash13(i+vec3(1,0,1)), f.x), mix(hash13(i+vec3(0,1,1)), hash13(i+vec3(1,1,1)), f.x), f.y), f.z); }
+        float band(vec3 p, float fq){ float w = fwidth(p.x*fq) + fwidth(p.y*fq) + fwidth(p.z*fq); return 1.0 - smoothstep(0.4, 1.2, w); }
+        vec3 bumpN(vec3 sp, vec3 n, float h, float fd){
+          vec3 sx = dFdx(sp), sy = dFdy(sp); vec3 r1 = cross(sy, n), r2 = cross(n, sx);
+          float det = dot(sx, r1) * fd; vec3 g = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2);
+          return normalize(abs(det) * n - g); }`)
+      .replace('#include <lights_physical_pars_fragment>', pars)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        float mShirt = vCloth.x, mShorts = vCloth.y, mShoe = vCloth.z, mHair = vCloth.w;
+        float cloth = clamp(mShirt + mShorts + mShoe, 0.0, 1.0);
+        gSkin = (1.0 - cloth) * (1.0 - mHair);
+        float heather = vnoise(vRest * 700.0) * 0.55 + vnoise(vRest * 140.0) * 0.45;
+        vec3 shirtC = mix(vec3(0.030, 0.034, 0.040), vec3(0.070, 0.076, 0.084), heather);
+        vec3 shortsC = vec3(0.40, 0.31, 0.19) * (0.88 + 0.22 * vnoise(vRest * 380.0));
+        float sole = 1.0 - smoothstep(0.020, 0.030, vRest.y);
+        vec3 shoeC = mix(vec3(0.035, 0.036, 0.04), vec3(0.80, 0.80, 0.78), sole);
+        vec3 hairC = vec3(0.016, 0.011, 0.008) * (0.65 + 0.7 * vnoise(vec3(vRest.x * 1100.0, vRest.y * 260.0, vRest.z * 1100.0)));
+        diffuseColor.rgb = mix(diffuseColor.rgb, pow(diffuseColor.rgb, vec3(1.06, 1.08, 1.10)) * vec3(1.0, 0.98, 0.96), gSkin);
+        diffuseColor.rgb = mix(diffuseColor.rgb, shirtC, mShirt);
+        diffuseColor.rgb = mix(diffuseColor.rgb, shortsC, mShorts);
+        diffuseColor.rgb = mix(diffuseColor.rgb, shoeC, mShoe);
+        diffuseColor.rgb = mix(diffuseColor.rgb, hairC, mHair);
+        if (vEye.x > 0.5) {
+          float er = length(vEye.yz);
+          vec3 eyeC = mix(vec3(0.62, 0.60, 0.57), vec3(0.11, 0.075, 0.045), smoothstep(0.50, 0.44, er));
+          eyeC = mix(eyeC, vec3(0.01), smoothstep(0.22, 0.17, er));
+          diffuseColor.rgb = eyeC; gSkin = 0.0;
+        }`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        float headish = smoothstep(1.56, 1.62, vRest.y);
+        roughnessFactor = mix(0.56, 0.44, headish) + (vnoise(vRest * 260.0) - 0.5) * 0.08;
+        roughnessFactor = mix(roughnessFactor, 0.90, mShirt);
+        roughnessFactor = mix(roughnessFactor, 0.93, mShorts);
+        roughnessFactor = mix(roughnessFactor, 0.48, mShoe);
+        roughnessFactor = mix(roughnessFactor, 0.62, mHair);
+        if (vEye.x > 0.5) roughnessFactor = 0.08;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          float h = 0.0;
+          h += mShirt * (vnoise(vRest * 900.0) * 0.00022 * band(vRest, 900.0) + vnoise(vRest * 24.0) * 0.0035);
+          h += mShorts * ((sin((vRest.x + vRest.y * 1.3 + vRest.z) * 2300.0) * 0.5 + 0.5) * 0.00018 * band(vRest, 2300.0) + vnoise(vRest * 30.0) * 0.0035);
+          h += mHair * vnoise(vec3(vRest.x * 1400.0, vRest.y * 320.0, vRest.z * 1400.0)) * 0.0005 * band(vRest, 1400.0);
+          h += gSkin * vnoise(vRest * 1700.0) * 0.00005 * band(vRest, 1700.0);
+          normal = bumpN(-vViewPosition, normal, h, faceDirection);
+        }`)
+      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+        #ifdef USE_SHEEN
+          material.sheenColor *= mix(1.0, 0.18, gSkin);
+        #endif`);
+  };
+}
+
+/* ---------- figure ---------- */
+let figure, mesh, bones = {}, P0 = {}, R0 = {}, Qroot, rootBone, s = 1, ground = 0;
+let FR = null; const RESTL = {};                                    // baked per-frame local quats & pelvis positions
+const SOLVED = ['pelvis', 'spine_01', 'spine_02', 'spine_03', 'neck_01', 'head', 'clavicle_l', 'clavicle_r',
+  'upperarm_l', 'upperarm_r', 'lowerarm_l', 'lowerarm_r', 'hand_l', 'hand_r',
+  'thigh_l', 'thigh_r', 'calf_l', 'calf_r', 'foot_l', 'foot_r', 'ball_l', 'ball_r'];
+const FINGERS = ['index', 'middle', 'ring', 'pinky', 'thumb'];
+
+function stripHelpers() {
+  // The MakeHuman base mesh ships fitting helpers (tights, skirt, hair helmet, joint cubes) in the same
+  // primitive. Keep the body (largest connected piece) and the two eyeballs; drop everything else.
+  const g = mesh.geometry, pos = g.attributes.position, idx = g.index.array, n = pos.count;
+  const par = new Int32Array(n).map((_, i) => i);
+  const find = x => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+  const uni = (a, b) => { a = find(a); b = find(b); if (a !== b) par[a] = b; };
+  for (let t = 0; t < idx.length; t += 3) { uni(idx[t], idx[t + 1]); uni(idx[t + 1], idx[t + 2]); }
+  const seen = new Map();
+  for (let i = 0; i < n; i++) {
+    const k = `${pos.getX(i).toFixed(5)},${pos.getY(i).toFixed(5)},${pos.getZ(i).toFixed(5)}`;
+    if (seen.has(k)) uni(i, seen.get(k)); else seen.set(k, i);
+  }
+  const tris = new Map();
+  for (let t = 0; t < idx.length; t += 3) { const r = find(idx[t]); tris.set(r, (tris.get(r) || 0) + 1); }
+  const comps = [...tris.entries()].sort((a, b) => b[1] - a[1]);
+  const body = comps[0][0];
+  const eyes = new Map();                         // root -> centre
+  for (const [r, c] of comps) {
+    if (c < 120 || c > 160) continue;
+    const ctr = new V(); let k = 0;
+    for (let i = 0; i < n; i++) if (find(i) === r) { ctr.x += pos.getX(i); ctr.y += pos.getY(i); ctr.z += pos.getZ(i); k++; }
+    ctr.divideScalar(k);
+    if (ctr.y > 1.66 && ctr.y < 1.72 && ctr.z > 0.1) eyes.set(r, ctr);
+  }
+  const keep = [];
+  for (let t = 0; t < idx.length; t += 3) { const r = find(idx[t]); if (r === body || eyes.has(r)) keep.push(idx[t], idx[t + 1], idx[t + 2]); }
+  g.setIndex(keep);
+  const eye = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const c = eyes.get(find(i)); if (!c) continue;
+    eye[i * 3] = 1; eye[i * 3 + 1] = (pos.getX(i) - c.x) / 0.012; eye[i * 3 + 2] = (pos.getY(i) - c.y) / 0.012;
+    if (pos.getZ(i) < c.z) eye[i * 3 + 1] = eye[i * 3 + 2] = 3;
+  }
+  g.setAttribute('aEye', new THREE.BufferAttribute(eye, 3));
+}
+
+function buildClothAttribute() {
+  const g = mesh.geometry, pos = g.attributes.position, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+  const names = mesh.skeleton.bones.map(b => b.name);
+  const grp = n => /^(index|middle|ring|pinky|thumb|hand)/.test(n) ? 'hand' : /^upperarm/.test(n) ? 'uarm'
+    : /^lowerarm/.test(n) ? 'farm' : /^(clavicle|spine|pelvis|Root)/.test(n) ? 'torso'
+    : /^(neck|head)/.test(n) ? 'head' : /^(thigh|calf)/.test(n) ? 'leg' : /^(foot|ball)/.test(n) ? 'foot' : 'torso';
+  const G = names.map(grp);
+  const ss = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+  const fa = { l: [P0.lowerarm_l, P0.hand_l], r: [P0.lowerarm_r, P0.hand_r] };
+  const out = new Float32Array(pos.count * 4);
+  const p = new V();
+  let soleY = Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    const w = { hand: 0, uarm: 0, farm: 0, torso: 0, head: 0, leg: 0, foot: 0 };
+    for (let k = 0; k < 4; k++) w[G[si.getComponent(i, k)]] += sw.getComponent(i, k);
+    if (w.foot > 0.5) soleY = Math.min(soleY, p.y);
+    const arm = w.uarm + w.farm + w.hand;
+    let shirt = 0, shorts = 0, shoe = 0, hair = 0;
+    if (arm > 0.3) {
+      const [a, b] = fa[p.x > 0 ? 'l' : 'r'];
+      const ab = b.clone().sub(a), t = p.clone().sub(a).dot(ab) / ab.lengthSq();
+      shirt = 1 - ss(0.86, 0.9, t);
+    } else {
+      const neck = 1.528 + 0.03 * ss(0.03, -0.05, p.z);
+      shirt = ss(0.925, 0.935, p.y) * (1 - ss(neck, neck + 0.01, p.y)) * (1 - ss(0.4, 0.8, w.head));
+      shorts = ss(0.582, 0.592, p.y) * (1 - ss(0.99, 1.0, p.y)) * (1 - shirt);
+      shoe = (1 - ss(0.098, 0.106, p.y - 0.012 * ss(0.05, 0.15, p.z - (p.x > 0 ? P0.foot_l.z : P0.foot_r.z))));
+      if (w.head > 0.5) {
+        let hl = 1.752 - 0.10 * ss(0.03, -0.075, p.z);
+        if (Math.abs(p.x) > 0.058 && p.z > -0.04) hl = Math.max(hl, 1.718);
+        hair = ss(hl, hl + 0.006, p.y);
+      }
+    }
+    out.set([shirt, shorts, shoe, hair], i * 4);
+  }
+  g.setAttribute('aCloth', new THREE.BufferAttribute(out, 4));
+  return soleY;
+}
+
+async function loadFigure() {
+  const bytes = b64ToBytes('glb');
+  const gltf = await new Promise((res, rej) => new GLTFLoader().parse(bytes.buffer, '', res, rej));
+  figure = gltf.scene;
+  figure.traverse(o => {
+    if (o.isBone) bones[o.name] = o;
+    if (o.isSkinnedMesh) mesh = o;
+  });
+  if (!mesh || !bones.pelvis || !bones.hand_l) throw new Error('rig');
+  scene.add(figure);
+  figure.updateMatrixWorld(true);
+  for (const n in bones) { P0[n] = bones[n].getWorldPosition(new V()); R0[n] = bones[n].getWorldQuaternion(new Q()); }
+  rootBone = bones.Root; Qroot = R0.Root.clone();
+  for (const n in bones) RESTL[n] = [bones[n].quaternion.clone(), bones[n].position.clone()];
+
+  const old = mesh.material;
+  const mat = new THREE.MeshPhysicalMaterial({
+    map: old.map, roughness: 0.52, metalness: 0, specularIntensity: 0.55, ior: 1.42,
+    sheen: 1.0, sheenColor: new THREE.Color(0.55, 0.52, 0.5), sheenRoughness: 0.75, envMapIntensity: 0.45,
+  });
+  if (mat.map) { mat.map.colorSpace = THREE.SRGBColorSpace; mat.map.anisotropy = 8; }
+  patchBody(mat);
+  old.dispose();
+  mesh.material = mat;
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.frustumCulled = false;
+  stripHelpers();
+  const soleY = buildClothAttribute();
+  ground = -soleY + 0.012;                         // lift so shoe soles (plus the 6 mm sole build-up) sit on the floor
+}
+
+/* ---------- data access ---------- */
+const jv = (id, f) => new V().fromArray(TRK.joints[id][f]).multiplyScalar(s);
+function dataLegLen() {
+  let t = 0;
+  for (let f = 0; f < N; f += 3) {
+    const g = id => new V().fromArray(TRK.joints[id][f]);
+    t += (g(23).distanceTo(g(25)) + g(25).distanceTo(g(27)) + g(24).distanceTo(g(26)) + g(26).distanceTo(g(28))) / 2;
+  }
+  return t / Math.ceil(N / 3);
+}
+
+/* ---------- retargeting (solve all 840 frames once) ---------- */
+let REST, FACE, ANCH, Y0;
+function prepareRest() {
+  const r = {};
+  r.hipMid = mid(P0.thigh_l, P0.thigh_r);
+  r.shMid = mid(P0.upperarm_l, P0.upperarm_r);
+  r.torsoUp = r.shMid.clone().sub(r.hipMid).normalize();
+  r.hipR = P0.thigh_r.clone().sub(P0.thigh_l);
+  r.shR = P0.upperarm_r.clone().sub(P0.upperarm_l);
+  r.pelvOff = P0.pelvis.clone().sub(r.hipMid);
+  for (const sd of ['l', 'r']) {
+    const up = P0['lowerarm_' + sd].clone().sub(P0['upperarm_' + sd]);
+    const fo = P0['hand_' + sd].clone().sub(P0['lowerarm_' + sd]);
+    const fold = perp(fo.clone().normalize(), up.clone().normalize()).normalize();
+    r['armL1_' + sd] = up.length(); r['armL2_' + sd] = fo.length();
+    r['armUp_' + sd] = up; r['armFo_' + sd] = fo;
+    r['armH_' + sd] = new V().crossVectors(up.clone().normalize(), fold).normalize();
+    const th = P0['calf_' + sd].clone().sub(P0['thigh_' + sd]), ca = P0['foot_' + sd].clone().sub(P0['calf_' + sd]);
+    r['legL1_' + sd] = th.length(); r['legL2_' + sd] = ca.length();
+    r['legTh_' + sd] = th; r['legCa_' + sd] = ca;
+    r['legHth_' + sd] = new V().crossVectors(th.clone().normalize(), new V(0, 0, 1)).normalize();
+    r['legHca_' + sd] = new V().crossVectors(ca.clone().normalize(), new V(0, 0, 1)).normalize();
+    r['foot_' + sd] = P0['ball_' + sd].clone().sub(P0['foot_' + sd]);
+    // hand frame: knuckle line (index→pinky) and palm normal (faces the body midline at rest)
+    const K = P0['pinky_01_' + sd].clone().sub(P0['index_01_' + sd]).normalize();
+    const fd = P0['middle_01_' + sd].clone().sub(P0['hand_' + sd]).normalize();
+    let pn = new V().crossVectors(fd, K).normalize();
+    if (pn.x * P0['hand_' + sd].x > 0) pn.negate();
+    r['handK_' + sd] = K; r['handPn_' + sd] = pn; r['handFd_' + sd] = fd;
+    // grip contact point, in hand-bone local space
+    const anchorW = P0['hand_' + sd].clone().lerp(P0['middle_01_' + sd], 0.72).addScaledVector(pn, 0.022);
+    r['anchor_' + sd] = bones['hand_' + sd].worldToLocal(anchorW.clone());
+    r['anchorW_' + sd] = anchorW.sub(P0['hand_' + sd]);
+  }
+  r.footLen = new V(r.foot_l.x, 0, r.foot_l.z).length();
+  return r;
+}
+
+function faceNormals() {      // clubface normal per frame: back of the lead hand ⟂ (lead forearm, shaft)
+  const out = []; let prev = null, sign = 1;
+  for (let f = 0; f < N; f++) {
+    const d = new V().fromArray(TRK.club[f]);
+    const fore = jv(15, f).sub(jv(13, f)).normalize();
+    const raw = new V().crossVectors(fore, d);
+    if (f === 0) sign = raw.dot(XT) >= 0 ? 1 : -1;
+    const w = clamp(raw.length() / 0.45, 0, 1);
+    const base = prev ? prev.clone() : perp(XT, d);
+    const F = raw.normalize().multiplyScalar(sign * w).addScaledVector(base.normalize(), 1 - w);
+    const Fp = perp(F, d).normalize(); out.push(Fp); prev = Fp;
+  }
+  return gaussVec(out, 3).map((F, f) => perp(F, new V().fromArray(TRK.club[f])).normalize());
+}
+function gaussVec(arr, sig) {
+  const r = Math.ceil(sig * 3), w = []; for (let k = -r; k <= r; k++) w.push(Math.exp(-k * k / (2 * sig * sig)));
+  return arr.map((_, i) => { const a = new V(); let ws = 0;
+    for (let k = -r; k <= r; k++) { const j = clamp(i + k, 0, arr.length - 1); a.addScaledVector(arr[j], w[k + r]); ws += w[k + r]; }
+    return a.divideScalar(ws); });
+}
+
+function anchors() {          // planted feet: address-median ankle position + foot yaw, on the floor
+  const A = {};
+  for (const [sd, ank, heel, toe] of [['l', 27, 29, 31], ['r', 28, 30, 32]]) {
+    const a = new V(), fw = new V();
+    for (let f = 0; f < 60; f++) { a.add(jv(ank, f)); fw.add(jv(toe, f).sub(jv(heel, f))); }
+    a.divideScalar(60); fw.y = 0; fw.normalize();
+    const ankle = new V(a.x, P0['foot_' + sd].y + ground, a.z);
+    const ball = ankle.clone().addScaledVector(fw, REST.footLen); ball.y = P0['ball_' + sd].y + ground;
+    A[sd] = { ankle, ball, fwd: fw, side: new V().crossVectors(UP, fw).normalize(), yaw: Math.atan2(fw.x, fw.z) };
+  }
+  return A;
+}
+
+const Wq = {};                                   // world quats of the frame being solved
+function setW(name, qWorld) {
+  const b = bones[name], par = b.parent;
+  Wq[name] = qWorld;
+  const pq = Wq[par.name] || par.getWorldQuaternion(new Q());
+  b.quaternion.copy(pq.clone().invert().multiply(qWorld));
+  b.updateWorldMatrix(false, true);
+}
+const wpos = n => bones[n].getWorldPosition(new V());
+
+function solveFrame(f) {
+  const d = {}; for (const id of TRK.ids) d[id] = jv(id, f);
+  const hipMid = mid(d[23], d[24]), shMid = mid(d[11], d[12]);
+  const torsoUp = shMid.clone().sub(hipMid).normalize();
+  Wq.Root = Qroot;
+
+  // pelvis and chest orientations
+  const pelvUp = UP.clone().lerp(torsoUp, 0.4).normalize();
+  const Dp = deltaQ(REST.hipR, REST.torsoUp, d[24].clone().sub(d[23]), pelvUp);
+  const Dc = deltaQ(REST.shR, REST.torsoUp, d[12].clone().sub(d[11]), torsoUp);
+
+  // root height from knee flex: each leg keeps the data's hip-to-ankle / leg-length ratio
+  const hipOff = { l: P0.thigh_l.clone().sub(REST.hipMid).applyQuaternion(Dp), r: P0.thigh_r.clone().sub(REST.hipMid).applyQuaternion(Dp) };
+  const ys = [];
+  for (const [sd, h, k, a] of [['l', 23, 25, 27], ['r', 24, 26, 28]]) {
+    const ratio = d[h].distanceTo(d[a]) / (d[h].distanceTo(d[k]) + d[k].distanceTo(d[a]));
+    const L = REST['legL1_' + sd] + REST['legL2_' + sd], D = ratio * L;
+    const H = new V(hipMid.x, 0, hipMid.z).add(hipOff[sd]), A = ANCH[sd].ankle;
+    const dh = Math.hypot(H.x - A.x, H.z - A.z);
+    ys.push(A.y + Math.sqrt(Math.max(D * D - dh * dh, 0)) - hipOff[sd].y);
+  }
+  // knee-flex height is solved once at address; after that the vertical motion comes from the camera solve
+  if (f === 0) Y0 = { knee: (ys[0] + ys[1]) / 2, hip: hipMid.y };
+  const rootPos = new V(hipMid.x, Y0.knee + (hipMid.y - Y0.hip), hipMid.z);
+
+  // pelvis
+  bones.pelvis.position.copy(rootBone.worldToLocal(rootPos.clone().add(REST.pelvOff.clone().applyQuaternion(Dp))));
+  setW('pelvis', Dp.clone().multiply(R0.pelvis));
+  setW('spine_01', Dp.clone().slerp(Dc, 0.33).multiply(R0.spine_01));
+  setW('spine_02', Dp.clone().slerp(Dc, 0.66).multiply(R0.spine_02));
+  setW('spine_03', Dc.clone().multiply(R0.spine_03));
+
+  // head from ears + nose, limited relative to the chest
+  const alpha = 0.32;
+  let Dh = deltaQ(new V(-1, 0, 0), new V(0, -Math.sin(alpha), Math.cos(alpha)),
+    d[8].clone().sub(d[7]), d[0].clone().sub(mid(d[7], d[8])));
+  const rel = Dc.clone().invert().multiply(Dh), ang = 2 * Math.acos(clamp(Math.abs(rel.w), 0, 1));
+  if (ang > 1.1) Dh = Dc.clone().multiply(new Q().slerp(rel, 1.1 / ang));
+  setW('neck_01', Dc.clone().slerp(Dh, 0.45).multiply(R0.neck_01));
+  setW('head', Dh.clone().multiply(R0.head));
+  for (const sd of ['l', 'r']) setW('clavicle_' + sd, Dc.clone().multiply(R0['clavicle_' + sd]));
+
+  // club frame + hand orientations
+  const cd = new V().fromArray(TRK.club[f]).normalize(), F = FACE[f];
+  const Dhand = {
+    l: deltaQ(REST.handK_l, REST.handPn_l, cd.clone().negate(), F.clone().negate()),
+    r: deltaQ(REST.handK_r, REST.handPn_r, cd.clone().negate(), F.clone()),
+  };
+  const off = { l: REST.anchorW_l.clone().applyQuaternion(Dhand.l), r: REST.anchorW_r.clone().applyQuaternion(Dhand.r) };
+  const figSh = mid(wpos('upperarm_l'), wpos('upperarm_r'));
+  const Cw = figSh.clone().add(mid(d[15], d[16]).sub(shMid));
+  const G = Cw.clone().add(mid(off.l, off.r));
+  const tgt = { l: G.clone().addScaledVector(cd, -0.047).sub(off.l), r: G.clone().addScaledVector(cd, 0.047).sub(off.r) };
+
+  // arms: clavicle follow, then two-bone IK with the data's elbow direction as the pole
+  for (const [sd, sh, el, wr] of [['l', 11, 13, 15], ['r', 12, 14, 16]]) {
+    const L1 = REST['armL1_' + sd], L2 = REST['armL2_' + sd];
+    let S = wpos('upperarm_' + sd);
+    const C0 = wpos('clavicle_' + sd), v = tgt[sd].clone().sub(S), dist = v.length();
+    const shift = clamp(0.02 + Math.max(0, dist - 0.96 * (L1 + L2)), 0, 0.065);
+    const S2 = S.clone().addScaledVector(v.normalize(), shift);
+    const Dcl = new Q().setFromUnitVectors(S.clone().sub(C0).normalize(), S2.clone().sub(C0).normalize());
+    setW('clavicle_' + sd, Dcl.multiply(Dc.clone().multiply(R0['clavicle_' + sd])));
+    S = wpos('upperarm_' + sd);
+
+    const line = d[wr].clone().sub(d[sh]).normalize();
+    const e = perp(d[el].clone().sub(d[sh]), line);
+    const pole = e.clone().addScaledVector(torsoUp, -0.025).addScaledVector(XT, sd === 'l' ? 0.0 : -0.01);
+    const ik = ik2(S, tgt[sd], L1, L2, pole);
+    const up = ik.E.clone().sub(S), fo = ik.T.clone().sub(ik.E);
+    let fold = perp(fo.clone().normalize(), up.clone().normalize());
+    fold = fold.lengthSq() > 1e-4 ? fold.normalize() : ik.pole.clone().negate();
+    const h = new V().crossVectors(up.clone().normalize(), fold).normalize();
+    const Du = deltaQ(REST['armUp_' + sd], REST['armH_' + sd], up, h);
+    let Df = deltaQ(REST['armFo_' + sd], REST['armH_' + sd], fo, h);
+    // move 60% of the wrist's twist into the forearm so the wrist doesn't candy-wrap
+    const tw = twistAbout(Dhand[sd].clone().multiply(Df.clone().invert()), fo.clone().normalize());
+    Df = new Q().slerp(tw, 0.6).multiply(Df);
+    setW('upperarm_' + sd, Du.multiply(R0['upperarm_' + sd]));
+    setW('lowerarm_' + sd, Df.multiply(R0['lowerarm_' + sd]));
+    setW('hand_' + sd, Dhand[sd].clone().multiply(R0['hand_' + sd]));
+  }
+
+  // legs: planted feet, heel rolls up around the ball of the foot only when the leg can't reach
+  for (const [sd, h, k, a] of [['l', 23, 25, 27], ['r', 24, 26, 28]]) {
+    const H = wpos('thigh_' + sd), An = ANCH[sd];
+    const L1 = REST['legL1_' + sd], L2 = REST['legL2_' + sd], L = (L1 + L2) * 0.997;
+    let ankle = An.ankle.clone(), lift = 0;
+    for (; lift < 0.95 && ankle.distanceTo(H) > L; lift += 0.02)
+      ankle = An.ankle.clone().sub(An.ball).applyAxisAngle(An.side, -(lift + 0.02)).add(An.ball);
+    const kl = perp(d[k].clone().sub(d[h]), d[a].clone().sub(d[h]).normalize());
+    const pole = kl.addScaledVector(An.fwd, 0.04);
+    const ik = ik2(H, ankle, L1, L2, pole);
+    const th = ik.E.clone().sub(H), ca = ik.T.clone().sub(ik.E);
+    setW('thigh_' + sd, deltaQ(REST['legTh_' + sd], REST['legHth_' + sd], th, new V().crossVectors(th.clone().normalize(), ik.pole)).multiply(R0['thigh_' + sd]));
+    setW('calf_' + sd, deltaQ(REST['legCa_' + sd], REST['legHca_' + sd], ca, new V().crossVectors(ca.clone().normalize(), ik.pole)).multiply(R0['calf_' + sd]));
+    setW('foot_' + sd, deltaQ(REST['foot_' + sd], new V(1, 0, 0), An.ball.clone().sub(wpos('foot_' + sd)), An.side).multiply(R0['foot_' + sd]));
+    setW('ball_' + sd, new Q().setFromAxisAngle(UP, An.yaw).multiply(R0['ball_' + sd]));
+  }
+}
+
+function curlFingers() {
+  const curl = { l: { '01': 0.95, '02': 1.15, '03': 0.75 }, r: { '01': 0.85, '02': 1.05, '03': 0.7 } };
+  for (const sd of ['l', 'r']) for (const fn of FINGERS) for (const seg of ['01', '02', '03']) {
+    const b = bones[`${fn}_${seg}_${sd}`]; if (!b) continue;
+    const isThumb = fn === 'thumb';
+    const axisW = isThumb ? REST['handFd_' + sd].clone() : REST['handK_' + sd].clone();
+    const child = bones[`${fn}_0${+seg + 1}_${sd}`];
+    const dir = (child ? P0[child.name] : P0[b.name].clone().add(REST['handFd_' + sd].clone().multiplyScalar(0.02))).clone().sub(P0[b.name]).normalize();
+    let ang = isThumb ? { '01': 0.25, '02': 0.45, '03': 0.35 }[seg] : curl[sd][seg];
+    const test = dir.clone().applyAxisAngle(axisW, ang);
+    if (test.sub(dir).dot(REST['handPn_' + sd]) < 0) ang = -ang;
+    const axisL = axisW.applyQuaternion(R0[b.name].clone().invert());
+    b.quaternion.multiply(new Q().setFromAxisAngle(axisL.normalize(), ang));
+  }
+}
+
+function bakeAll() {
+  REST = prepareRest();
+  s = (REST.legL1_l + REST.legL2_l + REST.legL1_r + REST.legL2_r) / 2 / dataLegLen();
+  ANCH = anchors();
+  FACE = faceNormals();
+  curlFingers();
+  const n = SOLVED.length, q = new Float32Array(N * n * 4), p = new Float32Array(N * 3);
+  for (let f = 0; f < N; f++) {
+    solveFrame(f);
+    SOLVED.forEach((b, i) => bones[b].quaternion.toArray(q, (f * n + i) * 4));
+    bones.pelvis.position.toArray(p, f * 3);
+  }
+  // zero-phase temporal smoothing (no lag, identical forward and backward, so scrubbing matches playback)
+  const sig = 1.3, r = 4, w = []; for (let k = -r; k <= r; k++) w.push(Math.exp(-k * k / (2 * sig * sig)));
+  const qs = new Float32Array(q.length), ps = new Float32Array(p.length);
+  for (let i = 0; i < n; i++) for (let f = 0; f < N; f++) {
+    const o = (f * n + i) * 4; let a = [0, 0, 0, 0], ws = 0;
+    for (let k = -r; k <= r; k++) {
+      const j = (clamp(f + k, 0, N - 1) * n + i) * 4;
+      const sg = (q[j] * q[o] + q[j + 1] * q[o + 1] + q[j + 2] * q[o + 2] + q[j + 3] * q[o + 3]) < 0 ? -1 : 1;
+      for (let c = 0; c < 4; c++) a[c] += sg * q[j + c] * w[k + r]; ws += w[k + r];
+    }
+    const m = Math.hypot(...a); for (let c = 0; c < 4; c++) qs[o + c] = a[c] / m;
+  }
+  for (let f = 0; f < N; f++) for (let c = 0; c < 3; c++) {
+    let a = 0, ws = 0; for (let k = -r; k <= r; k++) { a += p[clamp(f + k, 0, N - 1) * 3 + c] * w[k + r]; ws += w[k + r]; }
+    ps[f * 3 + c] = a / ws;
+  }
+  FR = { q: qs, p: ps, n };
+}
+
+/* ---------- club ---------- */
+const club = new THREE.Group(); scene.add(club);
+const clubHeadTip = new THREE.Object3D();
+{
+  const shaftM = new THREE.MeshPhysicalMaterial({ color: 0x2a2d31, roughness: 0.35, metalness: 0.2, clearcoat: 0.8, clearcoatRoughness: 0.2 });
+  const gripM = new THREE.MeshStandardMaterial({ color: 0x141515, roughness: 0.9 });
+  const crownM = new THREE.MeshPhysicalMaterial({ color: 0x0b0c0e, roughness: 0.25, metalness: 0.3, clearcoat: 1, clearcoatRoughness: 0.08 });
+  const faceM = new THREE.MeshStandardMaterial({ color: 0x6d7076, roughness: 0.38, metalness: 0.9 });
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.0135, 0.0108, 0.27, 20), gripM); grip.position.y = -0.03;
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.0135, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), gripM); cap.position.y = 0.105;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.0072, 0.0044, 0.86, 14), shaftM); shaft.position.y = -0.595;
+  const hosel = new THREE.Mesh(new THREE.CylinderGeometry(0.0062, 0.0075, 0.05, 14), crownM); hosel.position.y = -1.045;
+  const head = new THREE.Group(); head.position.y = -1.065; head.rotation.z = 0.59;
+  const hg = new THREE.SphereGeometry(1, 48, 24); const hp = hg.attributes.position;
+  for (let i = 0; i < hp.count; i++) {
+    let x = hp.getX(i) * 0.058, y = hp.getY(i) * 0.031, z = hp.getZ(i) * 0.052;
+    z = Math.min(z, 0.040); y = Math.max(y, -0.022);
+    hp.setXYZ(i, x - 0.052, y + 0.02, z - 0.038);
+  }
+  hg.computeVertexNormals();
+  const body = new THREE.Mesh(hg, crownM);
+  const face = new THREE.Mesh(new THREE.BoxGeometry(0.084, 0.04, 0.003), faceM); face.position.set(-0.052, 0.018, 0.0028);
+  head.add(body, face);
+  clubHeadTip.position.set(-0.052, 0.0, 0.0); head.add(clubHeadTip);
+  for (const m of [grip, cap, shaft, hosel, body, face]) { m.castShadow = true; }
+  club.add(grip, cap, shaft, hosel, head);
+}
+const ball = new THREE.Group(); scene.add(ball);
+{
+  const b = new THREE.Mesh(new THREE.SphereGeometry(0.02135, 32, 16), new THREE.MeshPhysicalMaterial({ color: 0xf4f4f0, roughness: 0.35, clearcoat: 0.6 }));
+  b.castShadow = true; b.position.y = 0.0428 + 0.02135; ball.add(b);
+  const tee = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.0018, 0.05, 10), new THREE.MeshStandardMaterial({ color: 0xe8e4d8, roughness: 0.6 }));
+  tee.position.y = 0.025 + 0.012; ball.add(tee);
+}
+const anchorWorld = sd => bones['hand_' + sd].localToWorld(REST['anchor_' + sd].clone());
+function placeClub(fi) {
+  const i = Math.floor(fi), t = fi - i, j = Math.min(i + 1, N - 1);
+  let d = new V().fromArray(TRK.club[i]).lerp(new V().fromArray(TRK.club[j]), t).normalize();
+  const G = mid(anchorWorld('l'), anchorWorld('r'));
+  if (BALLPT) {     // contact constraint: the club did meet the ball, so steer the shaft at it through impact
+    const w = Math.exp(-Math.pow((fi - IMPACT) / 11, 2));
+    if (w > 0.01) d = d.clone().lerp(BALLPT.clone().sub(G).normalize(), w * 0.9).normalize();
+  }
+  const F = perp(FACE[i].clone().lerp(FACE[j], t), d).normalize();
+  club.position.copy(G);
+  club.quaternion.copy(deltaQ(new V(0, -1, 0), new V(0, 0, 1), d, F));
+}
+
+/* ---------- pose playback ---------- */
+const qa = new Q(), qb = new Q();
+function applyPose(fi) {
+  const i = Math.floor(fi), t = fi - i, j = Math.min(i + 1, N - 1), n = FR.n;
+  SOLVED.forEach((b, k) => {
+    qa.fromArray(FR.q, (i * n + k) * 4); qb.fromArray(FR.q, (j * n + k) * 4);
+    bones[b].quaternion.slerpQuaternions(qa, qb, t);
+  });
+  bones.pelvis.position.fromArray(FR.p, i * 3).lerp(new V().fromArray(FR.p, j * 3), t);
+  figure.updateMatrixWorld(true);
+  placeClub(fi);
+  club.updateMatrixWorld(true);
+}
+
+/* ---------- club path + raw track ---------- */
+let pathLine, skel, BALLPT = null;
+function buildPath() {
+  applyPose(0); const t0 = clubHeadTip.getWorldPosition(new V());
+  BALLPT = new V(t0.x, 0.064, t0.z);
+  const pts = new Float32Array(N * 3), col = new Float32Array(N * 3);
+  const cA = new THREE.Color(0xe9a23b), cB = new THREE.Color(0x93b58a), tip = new V();
+  for (let f = 0; f < N; f++) {
+    applyPose(f); clubHeadTip.getWorldPosition(tip); tip.toArray(pts, f * 3);
+    (f <= 450 ? cA : cB).toArray(col, f * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  pathLine = new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 }));
+  scene.add(pathLine);
+  // ball at the clubhead's address position, on a tee
+  ball.position.set(BALLPT.x, 0, BALLPT.z);
+}
+const BONES2 = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28], [27, 29], [29, 31], [27, 31], [28, 30], [30, 32], [28, 32], [7, 8], [0, 7], [0, 8]];
+function buildSkel() {
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BONES2.length * 6), 3));
+  skel = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x7fe0c8, depthTest: false, transparent: true, opacity: 0.9 }));
+  skel.renderOrder = 10; skel.visible = false; scene.add(skel);
+}
+function updateSkel(fi) {
+  const f = Math.round(fi), arr = skel.geometry.attributes.position.array;
+  // raw track is drawn in the figure's frame: data scaled by s and lifted so its hips meet the figure's hips
+  const lift = (FR.p ? wpos('thigh_l').add(wpos('thigh_r')).multiplyScalar(0.5).y : 0) - mid(jv(23, f), jv(24, f)).y;
+  BONES2.forEach(([a, b], k) => { jv(a, f).add(new V(0, lift, 0)).toArray(arr, k * 6); jv(b, f).add(new V(0, lift, 0)).toArray(arr, k * 6 + 3); });
+  skel.geometry.attributes.position.needsUpdate = true;
+}
+
+/* ---------- turn metrics (from the track, relative to address) ---------- */
+let HIP = [], SHO = [];
+function turns() {
+  const yaw = (l, r, f) => { const v = jv(r, f).sub(jv(l, f)); return Math.atan2(v.z, -v.x); };
+  const h0 = yaw(23, 24, 0), s0 = yaw(11, 12, 0), deg = 180 / Math.PI;
+  for (let f = 0; f < N; f++) {
+    HIP.push(-((yaw(23, 24, f) - h0) * deg)); SHO.push(-((yaw(11, 12, f) - s0) * deg));
+  }
+}
+const fmtTurn = v => `${Math.abs(v).toFixed(0).padStart(3, ' ')}° ${Math.abs(v) < 1 ? 'square' : v < 0 ? 'open' : 'back'}`;
+
+/* ---------- cameras ---------- */
+let SRC = null;
+const CAMS = {
+  face: { label: 'Face-on', pos: [0.4, 1.3, 3.4], tgt: [0.05, 0.9, 0.15] },
+  dtl: { label: 'Down-the-line', pos: [-3.3, 1.35, 0.75], tgt: [0.1, 0.92, 0.25] },
+  top: { label: 'Top-down', pos: [0.02, 4.7, 0.9], tgt: [0.05, 0.75, 0.1] },
+  src: { label: 'Source camera', pos: null, tgt: null },
+};
+let camAnim = null, activeCam = 'face';
+function goCam(name, instant = false) {
+  activeCam = name;
+  const c = CAMS[name];
+  const to = { p: new V(...c.pos), t: new V(...c.tgt) };
+  document.querySelectorAll('[data-cam]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cam === name));
+  camera.fov = name === 'src' ? SRC.fov : 32;
+  fit();
+  if (instant || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    camera.position.copy(to.p); controls.target.copy(to.t); controls.update(); camAnim = null; return;
+  }
+  camAnim = { p0: camera.position.clone(), t0: controls.target.clone(), to, start: performance.now(), dur: 700 };
+}
+function sourceCamera() {
+  const hip = mid(wpos('thigh_l'), wpos('thigh_r'));
+  applyPose(0); const h0 = mid(wpos('thigh_l'), wpos('thigh_r'));
+  const pos = h0.clone().add(new V(...TRK.cam.pos).multiplyScalar(s));
+  const tgt = pos.clone().addScaledVector(new V(...TRK.cam.fwd), 3);
+  SRC = { fov: TRK.cam.fovY, up: new V(...TRK.cam.up) };
+  CAMS.src.pos = pos.toArray(); CAMS.src.tgt = tgt.toArray();
+  return hip;
+}
+
+/* ---------- UI ---------- */
+const scrub = $('scrub'), playBtn = $('play');
+let frame = 0, playing = !matchMedia('(prefers-reduced-motion: reduce)').matches, speed = 1, lastT = 0, ready = false;
+const ticks = $('ticks');
+for (const [p, name, f] of POS) {
+  const sp = document.createElement('span'); sp.textContent = p; sp.style.left = (f / (N - 1) * 100) + '%'; ticks.appendChild(sp);
+  const b = document.createElement('button'); b.className = 'chip'; b.dataset.frame = f;
+  b.innerHTML = `${name} <small>${p}·${f}</small>`;
+  b.addEventListener('click', () => { setPlaying(false); setFrame(f); });
+  $('chips').appendChild(b);
+}
+for (const k of ['face', 'dtl', 'top', 'src']) {
+  const b = document.createElement('button'); b.className = 'chip'; b.dataset.cam = k; b.textContent = CAMS[k].label;
+  b.setAttribute('aria-pressed', 'false');
+  b.addEventListener('click', () => goCam(k)); $('cams').appendChild(b);
+}
+for (const sp of [0.25, 0.5, 1, 2]) {
+  const b = document.createElement('button'); b.className = 'chip'; b.dataset.speed = sp; b.textContent = sp + '×';
+  b.setAttribute('aria-pressed', sp === 1); b.addEventListener('click', () => {
+    speed = sp; document.querySelectorAll('[data-speed]').forEach(x => x.setAttribute('aria-pressed', +x.dataset.speed === sp));
+    $('tSpeedLbl').textContent = sp + '× video';
+  }); $('speeds').appendChild(b);
+}
+function setPlaying(v) {
+  playing = v;
+  playBtn.setAttribute('aria-label', v ? 'Pause' : 'Play');
+  $('playIcon').innerHTML = v ? '<rect x="3" y="2" width="3.5" height="12"/><rect x="9.5" y="2" width="3.5" height="12"/>' : '<path d="M4 2l10 6-10 6z"/>';
+}
+setPlaying(playing);
+playBtn.addEventListener('click', () => { if (!playing && frame >= N - 1) frame = 0; setPlaying(!playing); });
+scrub.addEventListener('input', () => { setPlaying(false); setFrame(+scrub.value); });
+$('turn').addEventListener('change', e => { controls.autoRotate = e.target.checked; controls.autoRotateSpeed = 0.9; });
+$('path').addEventListener('change', e => { if (pathLine) pathLine.visible = e.target.checked; });
+$('skel').addEventListener('change', e => { if (skel) { skel.visible = e.target.checked; updateSkel(frame); } });
+const pip = $('pip'), plate = $('plate');
+$('pipOn').addEventListener('change', e => { if (e.target.checked && !pip.src) pip.src = videoSrc(); pip.hidden = !e.target.checked; syncVideo(true); });
+$('overlay').addEventListener('change', e => {
+  const on = e.target.checked;
+  if (on && !plate.src) plate.src = videoSrc();
+  plate.hidden = !on; env.visible = !on;
+  scene.background = on ? null : BG; scene.fog = on ? null : new THREE.Fog(0x0b0e0d, 4.5, 11);
+  renderer.domElement.style.opacity = on ? '0.78' : '1';
+  if (on) goCam('src'); syncVideo(true);
+});
+window.addEventListener('keydown', e => {
+  if (e.target.closest('input[type=text],textarea')) return;
+  if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); playBtn.click(); }
+  if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') {
+    if (e.target === scrub) return;
+    setPlaying(false); setFrame(Math.round(frame) + (e.code === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 10 : 1));
+  }
+});
+
+let seeking = false;
+function syncVideo(force) {
+  for (const v of [pip, plate]) {
+    if (v.hidden || !v.src) continue;
+    const t = Math.round(frame) / FPS + 0.5 / FPS;
+    if ((force || !v.seeking) && Math.abs(v.currentTime - t) > 0.5 / FPS) v.currentTime = t;
+  }
+}
+function phaseOf(f) { let cur = POS[0]; for (const p of POS) if (f >= p[2]) cur = p; return cur; }
+function setFrame(fi) {
+  frame = clamp(fi, 0, N - 1);
+  if (!ready) return;
+  applyPose(frame);
+  const f = Math.round(frame);
+  scrub.value = f;
+  $('rFrame').textContent = f;
+  $('rVideo').textContent = (T0 + frame / FPS).toFixed(2);
+  $('tClock').textContent = (frame / FPS).toFixed(2);
+  const ph = phaseOf(f); $('hPhase').textContent = `${ph[0]} ${ph[1]}`;
+  $('hClock').textContent = (frame / FPS).toFixed(3) + ' s';
+  $('hHip').textContent = fmtTurn(HIP[f]); $('hSh').textContent = fmtTurn(SHO[f]);
+  $('hX').textContent = `${Math.abs(SHO[f] - HIP[f]).toFixed(0)}°`;
+  document.querySelectorAll('[data-frame]').forEach(b => b.setAttribute('aria-pressed', +b.dataset.frame === f));
+  ball.visible = f <= IMPACT;
+  if (pathLine) pathLine.geometry.setDrawRange(0, f + 1);
+  if (skel && skel.visible) updateSkel(f);
+  syncVideo(false);
+}
+
+function fit() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  if (activeCam === 'src' && SRC) {             // keep the 16:9 plate and the 3D view in register
+    const vidH = Math.min(h, w * 9 / 16);
+    camera.fov = 2 * Math.atan(Math.tan(SRC.fov * Math.PI / 360) * h / vidH) * 180 / Math.PI;
+  }
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(fit).observe(stage);
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.min(0.1, (now - lastT) / 1000 || 0); lastT = now;
+  if (ready && playing) {
+    let nf = frame + dt * FPS * speed;
+    if (nf > N - 1) { if ($('loop').checked) nf = 0; else { nf = N - 1; setPlaying(false); } }
+    setFrame(nf);
+  }
+  if (camAnim) {
+    const k = clamp((now - camAnim.start) / camAnim.dur, 0, 1), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+    camera.position.lerpVectors(camAnim.p0, camAnim.to.p, e); controls.target.lerpVectors(camAnim.t0, camAnim.to.t, e);
+    if (k >= 1) camAnim = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function fail(msg) { const e = $('err'); e.hidden = false; e.textContent = msg; $('loading').hidden = true; }
+
+async function init() {
+  await loadFigure();
+  bakeAll();
+  turns();
+  buildPath();
+  buildSkel();
+  sourceCamera();
+  ready = true;
+  fit();
+  goCam('face', true);
+  setFrame(0);
+  $('loading').hidden = true;
+}
+requestAnimationFrame(tick);
+init().catch(e => { console.error(e); fail('The 3D figure could not be built: ' + (e && e.message || e)); });
+window.__golf = { restPose(){ ready=false; for (const n in RESTL){ bones[n].quaternion.copy(RESTL[n][0]); bones[n].position.copy(RESTL[n][1]); } figure.updateMatrixWorld(true); }, setFrame: f => setFrame(f), goCam, setPlaying, get s() { return s; }, bones, renderer, scene, camera, controls, ANCH: () => ANCH };
+</script>

@@ -38,6 +38,11 @@ Each tool lives in its own directory with its own README:
   30-minute loop, Layer B calls the Claude API on triggers only. All data
   (message text, entity names, run records) lives outside this repo under
   `$STYLO_V3_DATA`. See `stylometry/v3/BURNIN-V3.md`.
+- **`golf/`** — 3D driver-swing viewer. A phone-video MediaPipe pose track
+  (840 frames) retargeted with IK onto a MakeHuman athlete, with a modeled
+  club, P1–P10 position jumps, a club-path trace and a synced source-video
+  overlay. Single self-contained HTML (model + track + video embedded);
+  `golf/pipeline/` holds the offline data bake. See `golf/README.md`.
 - **`workbench/`** — one photo in, every instrument out. Shared SCRFD face
   detection fans out to age estimation, facial telemetry, and kinship
   comparison in a single pass (reuses `kinship/`'s pipeline + models,
